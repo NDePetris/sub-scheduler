@@ -57,10 +57,10 @@ Open the URL printed by Vite. The Worker verifies the local server-side identity
 
 ## Exercise the MVP locally
 
-1. Open **Schedule** and upload `tests/fixtures/schedule-sample.xlsx` with an Effective From date.
+1. Open **Schedule**, review the normal-version timeline and Special Schedules, then choose **Import Schedule** and select `tests/fixtures/schedule-sample.xlsx` with an Effective From date. The styled picker can clear or replace the selected workbook without a refresh.
 2. Review the detected worksheet, staff, rooms, A/B columns, staged blocks, warnings, and blocking errors.
 3. Map each imported label to an existing stable record, create records individually, or use **Create All Missing** for the sanitized role-label fixture.
-4. Activate the Schedule Version. Activation uses an atomic D1 batch and closes the preceding open-ended version immediately before the new Effective From date.
+4. Activate the Schedule Version. If the fictional seeded version is still open-ended, review the server-generated confirmation showing its proposed Effective To date, then choose **Activate & End Previous Schedule**. The confirmed operation uses an atomic D1 batch.
 5. Open **Sub Plan**, select a date covered by an active schedule, confirm A/B before recording absences, and use **Add Absence**.
 6. Open an Assignment to review its Default Sub Plan, candidates, availability source, Plan Periods Lost, projected workload, warnings, and override path. Direct, intentional-uncovered, structured, and split resolutions persist in D1.
 7. Use **Review & Finalize** to regenerate, edit, save, and copy the deterministic message, then finalize or reopen the plan.

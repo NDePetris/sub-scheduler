@@ -104,6 +104,14 @@ When opening a date with no Daily Sub Plan:
 
 Once created, a plan continues using its pinned schedule reference. Later activation or effective-date edits affect new plans, not historical ones. Rebuilding assignments within a plan uses its pinned schedule unless an administrator performs an explicit, separately designed rebase action; automatic rebasing is outside the MVP.
 
+### Schedule management
+
+The Schedule workspace lists normal versions, staged imports, and Special Schedules separately. Normal-version Current, Future, and Historical context is derived from the configured school timezone's current local date and the effective range; it is not stored as another lifecycle state. The existing persisted `retired` value represents the administrator-facing **Archived** state, which keeps the lifecycle intentionally small.
+
+Activation is a two-step server-authoritative operation when one earlier open-ended predecessor exists. A preview returns that predecessor and the proposed day-before Effective To date. Activation requires an explicit confirmation flag, recomputes topology, and batches predecessor closure, version/entry creation, and import activation. Any finite or otherwise ambiguous overlap is rejected with the conflicting version's name and range; the system does not merge arbitrary ranges.
+
+Effective-date and name edits validate the complete active topology and use an atomic guarded update. They never update `daily_sub_plans.schedule_version_id` or pinned Special Schedule references. Unreferenced Schedule Versions may be hard-deleted with entries and linked import staging/provenance; referenced versions may only be archived through the normal UI. Staff and Rooms remain independent stable identities. Staged-import deletion cascades only through staging tables.
+
 ## Core persistence model
 
 The logical entities from the MVP map to these responsibilities:
@@ -294,7 +302,9 @@ The August 2026 vertical-slice pass adds these concrete decisions:
 - Workload is derived from direct and split coverage over each historical plan's pinned schedule. Only overlaps with the candidate's PLAN blocks contribute Plan Period Equivalents; Admin and School Sub coverage contribute zero. Threshold and calendar-window length come from `application_settings`.
 - Resolution writes use atomic batches where child segments are replaced. Split segments require exact, gap-free parent coverage but retain arbitrary valid times; the client presents the configured snap interval. Conceptual redistribution/combine/switch/move-room data uses validated action-specific JSON and never introduces a student model.
 - Generated messages are immutable regeneration versions with independently editable text. Editing updates only the latest message draft. Reopening retains the most recent finalization actor/time.
-- Special Schedules remain a backend/domain capability in this pass: an active date-specific schedule takes precedence and is pinned while the normal version remains pinned for context; normal resolution resumes on the following date. A polished Special Schedule administration screen is intentionally deferred.
+- An active date-specific Special Schedule takes precedence and is pinned while the normal version remains pinned for context; normal resolution resumes on the following date. Full Special Schedule editing remains deferred.
+- The schedule-management pass promotes Schedule to a timeline/version workspace, exposes Special Schedules and staged imports, and moves import configuration behind an explicit action. The Worker owns activation previews, overlap explanations, guarded effective-date edits, reference-aware deletion, and archival. Special Schedules are visible with date, status, provenance, and usage context; a full Special Schedule editor remains deferred.
+- Plan responses derive an informational warning for each absence that generates no Needs Sub Assignments on the pinned schedule. The client distinguishes this true zero-Assignment state from filters hiding existing Assignments. A plan with a Special Schedule also returns its name so the pinned one-day override is explicit in the header.
 
 ## When this document changes
 

@@ -10,6 +10,7 @@ import { schoolScheduleAdapter } from '../src/features/schedule-import/school-sc
 import { ApplicationRepository } from './db/application-repository';
 import { ImportRepository } from './db/import-repository';
 import { PlanningRepository } from './db/planning-repository';
+import { ScheduleRepository } from './db/schedule-repository';
 import { HttpError, jsonError, jsonSuccess } from './http';
 import { createRequestContext } from './identity';
 import type { Env } from './types';
@@ -66,7 +67,24 @@ const mappingSchema = z.object({
   targetId: z.string().optional(),
   createNew: z.boolean().default(false),
 });
-const activationSchema = z.object({ name: z.string().trim().min(1).max(120) });
+const activationSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  confirmPredecessorClosure: z.boolean().default(false),
+});
+const scheduleConfigurationSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    effectiveFrom: dateSchema,
+    effectiveTo: dateSchema.nullable(),
+  })
+  .superRefine((value, context) => {
+    if (value.effectiveTo && value.effectiveTo < value.effectiveFrom) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Effective To must not precede Effective From.',
+      });
+    }
+  });
 const resolveSchema = z.object({
   action: z.enum(['assign', 'leave_uncovered', 'structured', 'split']),
   staffId: z.string().optional(),
@@ -125,6 +143,7 @@ export default {
       const context = await createRequestContext(env, requestId);
       const importRepository = new ImportRepository(env.DB);
       const planningRepository = new PlanningRepository(env.DB);
+      const scheduleRepository = new ScheduleRepository(env.DB);
 
       if (url.pathname === '/api/bootstrap' && request.method === 'GET') {
         const bootstrap = await applicationRepository.getBootstrapSummary();
@@ -219,6 +238,10 @@ export default {
       const importMatch = /^\/api\/schedule-imports\/([^/]+)$/.exec(
         url.pathname,
       );
+      if (importMatch?.[1] && request.method === 'DELETE') {
+        await importRepository.deleteStaged(importMatch[1]);
+        return jsonSuccess({ deleted: true }, requestId);
+      }
       if (importMatch?.[1] && request.method === 'GET') {
         return jsonSuccess(
           { import: await importRepository.get(importMatch[1]) },
@@ -248,6 +271,20 @@ export default {
       const activateMatch = /^\/api\/schedule-imports\/([^/]+)\/activate$/.exec(
         url.pathname,
       );
+      const activationPreviewMatch =
+        /^\/api\/schedule-imports\/([^/]+)\/activation-preview$/.exec(
+          url.pathname,
+        );
+      if (activationPreviewMatch?.[1] && request.method === 'GET') {
+        return jsonSuccess(
+          {
+            preview: await importRepository.activationPreview(
+              activationPreviewMatch[1],
+            ),
+          },
+          requestId,
+        );
+      }
       if (activateMatch?.[1] && request.method === 'POST') {
         const body = activationSchema.parse(await readJson(request));
         return jsonSuccess(
@@ -256,8 +293,38 @@ export default {
               activateMatch[1],
               body.name,
               context.actor.id,
+              body.confirmPredecessorClosure,
             ),
           },
+          requestId,
+        );
+      }
+
+      if (url.pathname === '/api/schedules' && request.method === 'GET') {
+        return jsonSuccess(await scheduleRepository.list(), requestId);
+      }
+
+      const scheduleMatch = /^\/api\/schedules\/([^/]+)$/.exec(url.pathname);
+      if (scheduleMatch?.[1] && request.method === 'PATCH') {
+        const body = scheduleConfigurationSchema.parse(await readJson(request));
+        return jsonSuccess(
+          await scheduleRepository.configure(scheduleMatch[1], body),
+          requestId,
+        );
+      }
+      if (scheduleMatch?.[1] && request.method === 'DELETE') {
+        return jsonSuccess(
+          await scheduleRepository.delete(scheduleMatch[1]),
+          requestId,
+        );
+      }
+
+      const archiveScheduleMatch = /^\/api\/schedules\/([^/]+)\/archive$/.exec(
+        url.pathname,
+      );
+      if (archiveScheduleMatch?.[1] && request.method === 'POST') {
+        return jsonSuccess(
+          await scheduleRepository.archive(archiveScheduleMatch[1]),
           requestId,
         );
       }

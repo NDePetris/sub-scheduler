@@ -273,6 +273,12 @@ The applicable normal schedule for a date is determined by its Effective From an
 
 Historical Daily Sub Plans remain associated with the schedule version they were created from.
 
+Before activation closes a prior open-ended Schedule Version, the administrator must see and confirm the exact proposed prior Effective To date. The prior range adjustment and new-version activation occur atomically. Finite or otherwise ambiguous overlaps remain blocking conflicts and identify the conflicting Schedule Version.
+
+Activated Schedule Version names and effective dates may be corrected after activation, subject to the same non-overlap validation. Corrections affect schedule resolution for future or uncreated Daily Sub Plans only; existing plans retain their pinned schedule references.
+
+An activated Schedule Version with no Daily Sub Plan references may be deleted with its entries and related import metadata. A referenced version must be archived instead so it no longer participates in normal resolution while its historical entries and pinned plans remain intact. Staff and Rooms are never deleted merely because they appeared in an import.
+
 ### 8.5 Special One-Day Schedules
 
 An administrator may designate a **Special Schedule** for a particular calendar date.
@@ -418,6 +424,8 @@ Do not include in MVP:
 - attachments.
 
 These can be added to the absence entity later without redesigning the basic workflow.
+
+If a saved absence has no applicable scheduled responsibility requiring a Sub for a Daily Sub Plan, persist the absence and show an informational explanation. This is not a fatal validation error and must be distinguished from an Assignment list whose active filters merely hide existing Assignments.
 
 ---
 

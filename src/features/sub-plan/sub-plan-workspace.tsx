@@ -136,8 +136,9 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
             )}
           </div>
           <p className="text-muted-foreground mt-0.5 text-xs">
-            {detail?.plan.scheduleName ??
-              'Resolving the pinned Schedule Version'}
+            {detail
+              ? `${detail.plan.scheduleName}${detail.plan.specialScheduleName ? ` Â· Special Schedule: ${detail.plan.specialScheduleName}` : ''}`
+              : 'Resolving the pinned Schedule Version'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -210,6 +211,18 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
         </div>
       )}
       {error && <ErrorBanner message={error} />}
+      {detail?.absences
+        .filter((absence) => absence.informationalWarning)
+        .map((absence) => (
+          <div
+            key={`absence-warning:${absence.id}`}
+            className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950"
+            role="status"
+          >
+            <AlertTriangle className="mr-1.5 inline size-4" />
+            {absence.informationalWarning}
+          </div>
+        ))}
       {loading && (
         <div className="border-border rounded-lg border bg-white p-5 text-sm">
           Loading persisted Sub Plan…
@@ -305,6 +318,7 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
                 </div>
                 <AssignmentTable
                   assignments={assignments}
+                  totalAssignments={detail.assignments.length}
                   onOpen={setSelectedAssignmentId}
                 />
               </>
@@ -351,15 +365,19 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
 
 function AssignmentTable({
   assignments,
+  totalAssignments,
   onOpen,
 }: {
   readonly assignments: readonly PlanAssignment[];
+  readonly totalAssignments: number;
   readonly onOpen: (id: string) => void;
 }) {
   if (assignments.length === 0) {
     return (
       <div className="text-muted-foreground p-10 text-center text-sm">
-        No Needs Sub Assignments match these filters.
+        {totalAssignments === 0
+          ? 'No Needs Sub Assignments were generated for the recorded absences on this date.'
+          : 'No Needs Sub Assignments match these filters.'}
       </div>
     );
   }

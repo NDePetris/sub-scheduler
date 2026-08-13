@@ -104,6 +104,7 @@ export interface PlanDetail {
     readonly scheduleVersionId: string;
     readonly scheduleName: string;
     readonly specialScheduleId: string | null;
+    readonly specialScheduleName: string | null;
     readonly status: 'draft' | 'finalized';
     readonly finalizedAt: string | null;
     readonly finalizedBy: string | null;
@@ -116,6 +117,7 @@ export interface PlanDetail {
     readonly endDate: string;
     readonly startTime: string | null;
     readonly endTime: string | null;
+    readonly informationalWarning: string | null;
   }[];
   readonly assignments: readonly PlanAssignment[];
   readonly schedule: readonly {
@@ -199,6 +201,48 @@ export interface ImportMapping {
   readonly displayValue: string;
   readonly targetId: string | null;
   readonly status: 'unmapped' | 'exact' | 'mapped' | 'created';
+}
+
+export interface ScheduleVersionSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+  readonly status: 'current' | 'future' | 'historical' | 'archived';
+  readonly sourceFileName: string | null;
+  readonly createdAt: string;
+  readonly activatedAt: string | null;
+  readonly entryCount: number;
+  readonly planReferenceCount: number;
+  readonly canDelete: boolean;
+}
+
+export interface SpecialScheduleSummary {
+  readonly id: string;
+  readonly date: string;
+  readonly name: string;
+  readonly status: 'draft' | 'active' | 'archived';
+  readonly sourceFileName: string | null;
+  readonly createdAt: string;
+  readonly entryCount: number;
+  readonly planReferenceCount: number;
+}
+
+export interface ScheduleManagementData {
+  readonly schoolDate: string;
+  readonly scheduleVersions: readonly ScheduleVersionSummary[];
+  readonly specialSchedules: readonly SpecialScheduleSummary[];
+}
+
+export interface ActivationPreview {
+  readonly action: 'activate' | 'close_predecessor';
+  readonly predecessor: {
+    readonly id: string;
+    readonly name: string;
+    readonly effectiveFrom: string;
+    readonly effectiveTo: null;
+    readonly proposedEffectiveTo: string;
+  } | null;
 }
 
 export async function getBootstrapData(
@@ -366,12 +410,64 @@ export async function mapImportValue(
 export async function activateScheduleImport(
   importId: string,
   name: string,
+  confirmPredecessorClosure = false,
 ): Promise<ScheduleImportDetail> {
   const result = await apiRequest<{ import: ScheduleImportDetail }>(
     `/api/schedule-imports/${importId}/activate`,
-    { method: 'POST', body: JSON.stringify({ name }) },
+    {
+      method: 'POST',
+      body: JSON.stringify({ name, confirmPredecessorClosure }),
+    },
   );
   return result.import;
+}
+
+export async function previewScheduleActivation(
+  importId: string,
+): Promise<ActivationPreview> {
+  const result = await apiRequest<{ preview: ActivationPreview }>(
+    `/api/schedule-imports/${importId}/activation-preview`,
+  );
+  return result.preview;
+}
+
+export async function deleteScheduleImport(importId: string): Promise<void> {
+  await apiRequest(`/api/schedule-imports/${importId}`, { method: 'DELETE' });
+}
+
+export async function getScheduleManagement(): Promise<ScheduleManagementData> {
+  return apiRequest<ScheduleManagementData>('/api/schedules');
+}
+
+export async function configureSchedule(
+  id: string,
+  input: {
+    readonly name: string;
+    readonly effectiveFrom: string;
+    readonly effectiveTo: string | null;
+  },
+): Promise<ScheduleManagementData> {
+  return apiRequest<ScheduleManagementData>(`/api/schedules/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteSchedule(
+  id: string,
+): Promise<ScheduleManagementData> {
+  return apiRequest<ScheduleManagementData>(`/api/schedules/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function archiveSchedule(
+  id: string,
+): Promise<ScheduleManagementData> {
+  return apiRequest<ScheduleManagementData>(`/api/schedules/${id}/archive`, {
+    method: 'POST',
+    body: '{}',
+  });
 }
 
 async function apiRequest<T = unknown>(

@@ -25,6 +25,7 @@ interface PlanRow {
   finalized_at: string | null;
   finalized_by: string | null;
   schedule_name: string;
+  special_schedule_name: string | null;
   effective_from: string;
 }
 
@@ -36,6 +37,7 @@ interface ScheduleResolutionRow {
 
 interface SpecialScheduleRow {
   id: string;
+  name: string;
 }
 
 interface EntryRow {
@@ -309,6 +311,7 @@ export class PlanningRepository {
         scheduleVersionId: plan.schedule_version_id,
         scheduleName: plan.schedule_name,
         specialScheduleId: plan.special_schedule_id,
+        specialScheduleName: plan.special_schedule_name,
         status: plan.status,
         finalizedAt: plan.finalized_at,
         finalizedBy: plan.finalized_by,
@@ -321,6 +324,12 @@ export class PlanningRepository {
         endDate: absence.end_date,
         startTime: absence.start_time,
         endTime: absence.end_time,
+        informationalWarning: absenceWarning(
+          absence,
+          assignments,
+          schedule,
+          plan.day_type,
+        ),
       })),
       assignments: assignmentDtos,
       schedule: schedule.map((entry) => ({
@@ -1299,6 +1308,7 @@ export class PlanningRepository {
         finalized_at: null,
         finalized_by: null,
         schedule_name: resolved.normal.name,
+        special_schedule_name: resolved.special?.name ?? null,
         effective_from: resolved.normal.effective_from,
       },
       insert: this.db
@@ -1324,7 +1334,7 @@ export class PlanningRepository {
     const [special, normal] = await Promise.all([
       this.db
         .prepare(
-          `SELECT id FROM special_schedules WHERE date = ? AND status = 'active' LIMIT 1`,
+          `SELECT id, name FROM special_schedules WHERE date = ? AND status = 'active' LIMIT 1`,
         )
         .bind(date)
         .first<SpecialScheduleRow>(),
@@ -1360,9 +1370,11 @@ export class PlanningRepository {
       .prepare(
         `SELECT p.id, p.date, p.day_type, p.schedule_version_id,
                 p.special_schedule_id, p.status, p.finalized_at, p.finalized_by,
-                sv.name AS schedule_name, sv.effective_from
+                sv.name AS schedule_name, ss.name AS special_schedule_name,
+                sv.effective_from
            FROM daily_sub_plans p
            JOIN schedule_versions sv ON sv.id = p.schedule_version_id
+      LEFT JOIN special_schedules ss ON ss.id = p.special_schedule_id
           WHERE p.date = ?`,
       )
       .bind(date)
@@ -1374,9 +1386,11 @@ export class PlanningRepository {
       .prepare(
         `SELECT p.id, p.date, p.day_type, p.schedule_version_id,
                 p.special_schedule_id, p.status, p.finalized_at, p.finalized_by,
-                sv.name AS schedule_name, sv.effective_from
+                sv.name AS schedule_name, ss.name AS special_schedule_name,
+                sv.effective_from
            FROM daily_sub_plans p
            JOIN schedule_versions sv ON sv.id = p.schedule_version_id
+      LEFT JOIN special_schedules ss ON ss.id = p.special_schedule_id
           WHERE p.id = ?`,
       )
       .bind(id)
@@ -1616,6 +1630,32 @@ function timeRangesOverlap(
 ): boolean {
   if (!absenceStart || !absenceEnd) return true;
   return absenceStart < endTime && startTime < absenceEnd;
+}
+
+function absenceWarning(
+  absence: AbsenceRow,
+  assignments: readonly AssignmentRow[],
+  schedule: readonly EntryRow[],
+  dayType: DayType,
+): string | null {
+  if (assignments.some((assignment) => assignment.absence_id === absence.id))
+    return null;
+  const staffEntries = schedule.filter(
+    (entry) => entry.staff_id === absence.staff_id,
+  );
+  if (staffEntries.length === 0) {
+    return `${absence.staff_name} was added as absent, but no schedule entries were found for this staff member on the pinned schedule.`;
+  }
+  const applicableEntries = staffEntries.filter(
+    (entry) => entry.day_type === 'ALL' || entry.day_type === dayType,
+  );
+  if (applicableEntries.length === 0) {
+    return `${absence.staff_name} was added as absent, but no applicable ${dayType}-day schedule entries were found for this date.`;
+  }
+  if (absence.start_time && absence.end_time) {
+    return `${absence.staff_name} was added as absent, but no scheduled responsibilities requiring a Sub overlap the recorded absence time.`;
+  }
+  return `${absence.staff_name} was added as absent, but no scheduled responsibilities requiring a Sub were found for this date.`;
 }
 
 function parseJson(value: string | null): unknown {

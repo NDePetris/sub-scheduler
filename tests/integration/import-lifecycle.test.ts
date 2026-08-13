@@ -40,7 +40,7 @@ describe.sequential('schedule import lifecycle', () => {
     const staged = await repository.stage({
       fileName: 'fixture-schedule.xlsx',
       sha256: 'fixture-import-sha-2099',
-      effectiveFrom: '2099-01-01',
+      effectiveFrom: '2026-08-17',
       effectiveTo: null,
       candidate: candidate('Avery Bennett', 'PRI-101'),
       issues: [],
@@ -53,10 +53,23 @@ describe.sequential('schedule import lifecycle', () => {
       entryCount: 1,
     });
 
+    const preview = await repository.activationPreview(staged.id);
+    expect(preview).toEqual({
+      action: 'close_predecessor',
+      predecessor: {
+        id: 'schedule_2026_fall',
+        name: 'Fictional Fall Schedule',
+        effectiveFrom: '2026-08-01',
+        effectiveTo: null,
+        proposedEffectiveTo: '2026-08-16',
+      },
+    });
+
     const activated = await repository.activate(
       staged.id,
       'Future Fixture Schedule',
       'user_local_admin',
+      true,
     );
     expect(activated.status).toBe('activated');
     expect(activated.activatedScheduleVersionId).toBeTruthy();
@@ -64,7 +77,7 @@ describe.sequential('schedule import lifecycle', () => {
     const prior = await testEnv.DB.prepare(
       `SELECT effective_to FROM schedule_versions WHERE id = 'schedule_2026_fall'`,
     ).first<{ effective_to: string | null }>();
-    expect(prior?.effective_to).toBe('2098-12-31');
+    expect(prior?.effective_to).toBe('2026-08-16');
     const entries = await testEnv.DB.prepare(
       `SELECT COUNT(*) AS count FROM schedule_entries WHERE schedule_version_id = ?`,
     )

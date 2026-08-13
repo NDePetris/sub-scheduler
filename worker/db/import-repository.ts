@@ -70,8 +70,20 @@ interface StagedEntryRow {
 
 interface ActiveVersionRow {
   id: string;
+  name: string;
   effective_from: string;
   effective_to: string | null;
+}
+
+export interface ActivationPreview {
+  readonly action: 'activate' | 'close_predecessor';
+  readonly predecessor: {
+    readonly id: string;
+    readonly name: string;
+    readonly effectiveFrom: string;
+    readonly effectiveTo: null;
+    readonly proposedEffectiveTo: string;
+  } | null;
 }
 
 export class ImportRepository {
@@ -312,9 +324,11 @@ export class ImportRepository {
     return this.get(input.importId);
   }
 
-  async activate(importId: string, name: string, actorId: string) {
+  async activationPreview(importId: string): Promise<ActivationPreview> {
     const detail = await this.get(importId);
-    if (detail.status === 'activated') return detail;
+    if (detail.status === 'activated') {
+      return { action: 'activate', predecessor: null };
+    }
     if (
       detail.blockingErrors > 0 ||
       detail.unmappedStaff > 0 ||
@@ -324,6 +338,63 @@ export class ImportRepository {
         409,
         'import_not_ready',
         'Resolve blocking validation issues and required mappings before activation.',
+      );
+    }
+
+    const active = await this.db
+      .prepare(
+        `SELECT id, name, effective_from, effective_to
+           FROM schedule_versions WHERE status = 'active'
+          ORDER BY effective_from`,
+      )
+      .all<ActiveVersionRow>();
+    const predecessors = active.results.filter(
+      (version) =>
+        version.effective_to === null &&
+        version.effective_from < detail.effectiveFrom,
+    );
+    if (predecessors.length > 1) {
+      throw new HttpError(
+        409,
+        'schedule_range_conflict',
+        'More than one open-ended Schedule Version precedes this import. Correct the existing ranges before activation.',
+      );
+    }
+    const predecessor = predecessors[0] ?? null;
+    for (const version of active.results) {
+      if (version.id === predecessor?.id) continue;
+      if (rangesOverlap(version, detail)) {
+        throw scheduleConflict(version);
+      }
+    }
+    return predecessor
+      ? {
+          action: 'close_predecessor',
+          predecessor: {
+            id: predecessor.id,
+            name: predecessor.name,
+            effectiveFrom: predecessor.effective_from,
+            effectiveTo: null,
+            proposedEffectiveTo: shiftSchoolDate(detail.effectiveFrom, -1),
+          },
+        }
+      : { action: 'activate', predecessor: null };
+  }
+
+  async activate(
+    importId: string,
+    name: string,
+    actorId: string,
+    confirmPredecessorClosure = false,
+  ) {
+    const detail = await this.get(importId);
+    if (detail.status === 'activated') return detail;
+    const preview = await this.activationPreview(importId);
+    if (preview.action === 'close_predecessor' && !confirmPredecessorClosure) {
+      throw new HttpError(
+        409,
+        'activation_confirmation_required',
+        `${preview.predecessor?.name ?? 'The previous schedule'} is open-ended. Confirm that it should end on ${preview.predecessor?.proposedEffectiveTo ?? ''}.`,
       );
     }
 
@@ -355,35 +426,19 @@ export class ImportRepository {
       );
     }
 
-    const active = await this.db
-      .prepare(
-        `SELECT id, effective_from, effective_to
-           FROM schedule_versions WHERE status = 'active'
-          ORDER BY effective_from`,
-      )
-      .all<ActiveVersionRow>();
     const statements: D1PreparedStatement[] = [];
-    for (const version of active.results) {
-      if (
-        version.effective_to === null &&
-        version.effective_from < detail.effectiveFrom
-      ) {
-        statements.push(
-          this.db
-            .prepare(
-              `UPDATE schedule_versions SET effective_to = ? WHERE id = ?`,
-            )
-            .bind(shiftSchoolDate(detail.effectiveFrom, -1), version.id),
-        );
-        continue;
-      }
-      if (rangesOverlap(version, detail)) {
-        throw new HttpError(
-          409,
-          'schedule_range_conflict',
-          'The requested effective dates overlap another active Schedule Version.',
-        );
-      }
+    if (preview.predecessor) {
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE schedule_versions SET effective_to = ?
+              WHERE id = ? AND status = 'active' AND effective_to IS NULL`,
+          )
+          .bind(
+            preview.predecessor.proposedEffectiveTo,
+            preview.predecessor.id,
+          ),
+      );
     }
 
     const scheduleVersionId = crypto.randomUUID();
@@ -443,6 +498,21 @@ export class ImportRepository {
     );
     await this.db.batch(statements);
     return this.get(importId);
+  }
+
+  async deleteStaged(importId: string): Promise<void> {
+    const detail = await this.get(importId);
+    if (detail.status === 'activated') {
+      throw new HttpError(
+        409,
+        'import_already_activated',
+        'Activated import provenance is managed with its Schedule Version.',
+      );
+    }
+    await this.db
+      .prepare(`DELETE FROM schedule_imports WHERE id = ?`)
+      .bind(importId)
+      .run();
   }
 
   private async hydrate(row: ImportRow) {
@@ -633,5 +703,13 @@ function rangesOverlap(
   return (
     existing.effective_from <= incomingEnd &&
     incoming.effectiveFrom <= existingEnd
+  );
+}
+
+function scheduleConflict(version: ActiveVersionRow): HttpError {
+  return new HttpError(
+    409,
+    'schedule_range_conflict',
+    `The requested dates overlap ${version.name} (${version.effective_from} to ${version.effective_to ?? 'open-ended'}). Schedule Version ranges cannot be ambiguous.`,
   );
 }
