@@ -1,7 +1,7 @@
 import {
   affectedResponsibilities,
   calculatePlanPeriodsLost,
-  enumerateSchoolDates,
+  enumerateWeekdaySchoolDates,
   expectedDayType,
   projectedPlanPeriodsLost,
   rankCandidates,
@@ -368,7 +368,7 @@ export class PlanningRepository {
     },
     actorId: string,
   ) {
-    const dates = enumerateSchoolDates(input.startDate, input.endDate);
+    const dates = enumerateWeekdaySchoolDates(input.startDate, input.endDate);
     const staff = await this.db
       .prepare(
         `SELECT id, display_name FROM staff WHERE id = ? AND is_active = 1`,
@@ -415,14 +415,69 @@ export class PlanningRepository {
                 SET assigned_staff_id = NULL, resolution_type = NULL,
                     resolution_details_json = NULL, status = 'unresolved',
                     is_default = 0, conflict_explanation = ?, updated_by = ?,
+                    override_acknowledged_at = NULL,
+                    override_acknowledged_by = NULL,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-              WHERE daily_sub_plan_id = ? AND is_default = 1
+              WHERE daily_sub_plan_id = ? AND status = 'assigned'
                 AND assigned_staff_id = ?
                 AND (? IS NULL OR (start_time < ? AND ? < end_time))`,
           )
           .bind(
             `${staff.display_name} is also absent.`,
             actorId,
+            planSeed.plan.id,
+            staff.id,
+            input.startTime,
+            input.endTime,
+            input.startTime,
+          ),
+        this.db
+          .prepare(
+            `UPDATE assignments
+                SET assigned_staff_id = NULL, resolution_type = NULL,
+                    resolution_details_json = NULL, status = 'unresolved',
+                    is_default = 0, conflict_explanation = ?, updated_by = ?,
+                    override_acknowledged_at = NULL,
+                    override_acknowledged_by = NULL,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              WHERE daily_sub_plan_id = ? AND status = 'assigned'
+                AND resolution_type = 'split_coverage'
+                AND EXISTS (
+                  SELECT 1 FROM assignment_segments invalid_segment
+                   WHERE invalid_segment.assignment_id = assignments.id
+                     AND invalid_segment.staff_id = ?
+                     AND (? IS NULL OR (
+                       invalid_segment.start_time < ?
+                       AND ? < invalid_segment.end_time
+                     ))
+                )`,
+          )
+          .bind(
+            `${staff.display_name}, who was providing split coverage, is also absent.`,
+            actorId,
+            planSeed.plan.id,
+            staff.id,
+            input.startTime,
+            input.endTime,
+            input.startTime,
+          ),
+        this.db
+          .prepare(
+            `DELETE FROM assignment_segments
+              WHERE assignment_id IN (
+                SELECT invalid_segment.assignment_id
+                  FROM assignment_segments invalid_segment
+                  JOIN assignments parent
+                    ON parent.id = invalid_segment.assignment_id
+                 WHERE parent.daily_sub_plan_id = ?
+                   AND invalid_segment.staff_id = ?
+                   AND (? IS NULL OR (
+                     invalid_segment.start_time < ?
+                     AND ? < invalid_segment.end_time
+                   ))
+              )`,
+          )
+          .bind(
             planSeed.plan.id,
             staff.id,
             input.startTime,
@@ -486,7 +541,7 @@ export class PlanningRepository {
                ON CONFLICT DO NOTHING`,
             )
             .bind(
-              `assignment:${absenceId}:${source.id}`,
+              `assignment:${planSeed.plan.id}:${absenceId}:${source.id}`,
               planSeed.plan.id,
               absenceId,
               sourceScheduleId,
@@ -848,6 +903,7 @@ export class PlanningRepository {
 
   async regenerateMessage(date: string, actorId: string) {
     const detail = await this.getPlan(date);
+    await this.assertDraft(detail.plan.id);
     const settings = await this.settings();
     const assignments = detail.assignments.map((assignment) => ({
       startTime: assignment.startTime,
@@ -885,6 +941,7 @@ export class PlanningRepository {
         'plan_not_found',
         'No Sub Plan exists for this date.',
       );
+    await this.assertDraft(plan.id);
     const message = await this.latestMessage(plan.id);
     if (!message)
       throw new HttpError(

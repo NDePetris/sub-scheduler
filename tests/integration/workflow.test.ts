@@ -96,6 +96,25 @@ describe('persisted MVP workflow', () => {
       (await api(`/api/plans/${date}/status`, 'POST', { status: 'finalized' }))
         .response.status,
     ).toBe(200);
+
+    const finalizedEdit = await api(`/api/plans/${date}/message`, 'PATCH', {
+      editedText: 'This must not be saved while finalized.',
+    });
+    expect(finalizedEdit.response.status).toBe(409);
+    expect(
+      (finalizedEdit.payload as { error: { code: string } }).error.code,
+    ).toBe('plan_finalized');
+
+    const finalizedRegenerate = await api(
+      `/api/plans/${date}/message/regenerate`,
+      'POST',
+      {},
+    );
+    expect(finalizedRegenerate.response.status).toBe(409);
+    expect(
+      (finalizedRegenerate.payload as { error: { code: string } }).error.code,
+    ).toBe('plan_finalized');
+
     const reopened = await api(`/api/plans/${date}/status`, 'POST', {
       status: 'draft',
     });
@@ -104,6 +123,17 @@ describe('persisted MVP workflow', () => {
     }>(reopened.payload).detail.plan;
     expect(reopenedPlan.status).toBe('draft');
     expect(reopenedPlan.finalizedAt).toBeTruthy();
+
+    const reopenedEdit = await api(`/api/plans/${date}/message`, 'PATCH', {
+      editedText: 'Editing is restored after reopening.',
+    });
+    expect(reopenedEdit.response.status).toBe(200);
+    const reopenedRegenerate = await api(
+      `/api/plans/${date}/message/regenerate`,
+      'POST',
+      {},
+    );
+    expect(reopenedRegenerate.response.status).toBe(200);
   });
 
   it('limits partial-day generation to overlapping responsibility time', async () => {
@@ -151,6 +181,8 @@ describe('persisted MVP workflow', () => {
           id: string;
           description: string;
           status: string;
+          assignedStaff: { id: string } | null;
+          isDefault: boolean;
           defaultAction: unknown;
           conflictExplanation: string | null;
         }>;
@@ -161,6 +193,8 @@ describe('persisted MVP workflow', () => {
     );
     expect(affected).toMatchObject({
       status: 'unresolved',
+      assignedStaff: null,
+      isDefault: false,
       conflictExplanation: 'Morgan Ellis is also absent.',
     });
     expect(affected?.defaultAction).toBeTruthy();
@@ -214,29 +248,324 @@ describe('persisted MVP workflow', () => {
     expect(audit?.override_acknowledged_at).toBeTruthy();
   });
 
-  it('expands a multi-day absence into independently pinned daily plans', async () => {
+  it('generates independent idempotent Assignments for an A/B/A multi-day absence', async () => {
+    const dates = ['2026-10-12', '2026-10-13', '2026-10-14'] as const;
+    for (const [index, date] of dates.entries()) {
+      await api('/api/plans/ensure', 'POST', {
+        date,
+        dayType: index === 1 ? 'B' : 'A',
+      });
+    }
     const result = await api('/api/absences', 'POST', {
       staffId: 'staff_priya_nair',
-      startDate: '2026-09-14',
-      endDate: '2026-09-16',
+      startDate: dates[0],
+      endDate: dates[2],
       startTime: null,
       endTime: null,
     });
     expect(result.response.status).toBe(201);
-    for (const date of ['2026-09-14', '2026-09-15', '2026-09-16']) {
+    const absenceId = data<{ absenceId: string }>(result.payload).absenceId;
+    const assignmentIds: string[] = [];
+    for (const [index, date] of dates.entries()) {
       const planResult = await api(`/api/plans/${date}`);
       const detail = data<{
         detail: {
-          plan: { date: string; scheduleVersionId: string };
+          plan: { date: string; dayType: string; scheduleVersionId: string };
           absences: unknown[];
+          assignments: Array<{
+            id: string;
+            startTime: string;
+            description: string;
+          }>;
         };
       }>(planResult.payload).detail;
       expect(detail.plan).toMatchObject({
         date,
+        dayType: index === 1 ? 'B' : 'A',
         scheduleVersionId: 'schedule_2026_fall',
       });
       expect(detail.absences).toHaveLength(1);
+      expect(detail.assignments).toHaveLength(1);
+      expect(detail.assignments[0]).toMatchObject({
+        startTime: index === 1 ? '10:30' : '09:40',
+        description: 'Middle School Humanities',
+      });
+      assignmentIds.push(detail.assignments[0]!.id);
     }
+    expect(new Set(assignmentIds).size).toBe(3);
+
+    const repeatedSources = await testEnv.DB.prepare(
+      `SELECT p.date, a.id, a.source_schedule_entry_id
+         FROM assignments a
+         JOIN daily_sub_plans p ON p.id = a.daily_sub_plan_id
+        WHERE a.absence_id = ?
+        ORDER BY p.date`,
+    )
+      .bind(absenceId)
+      .all<{ date: string; id: string; source_schedule_entry_id: string }>();
+    expect(
+      repeatedSources.results.map((row) => row.source_schedule_entry_id),
+    ).toEqual([
+      'entry_priya_a_0940',
+      'entry_priya_b_1030',
+      'entry_priya_a_0940',
+    ]);
+
+    await testEnv.DB.prepare(
+      `INSERT OR IGNORE INTO assignments (
+         id, daily_sub_plan_id, absence_id, source_schedule_entry_id,
+         source_special_schedule_entry_id, start_time, end_time,
+         responsibility_type, description, room_id, status, is_default,
+         updated_by
+       )
+       SELECT 'duplicate_generated_assignment', daily_sub_plan_id, absence_id,
+              source_schedule_entry_id, source_special_schedule_entry_id,
+              start_time, end_time, responsibility_type, description, room_id,
+              status, is_default, updated_by
+         FROM assignments WHERE id = ?`,
+    )
+      .bind(assignmentIds[0])
+      .run();
+    const firstPlanCount = await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count
+         FROM assignments
+        WHERE daily_sub_plan_id = (
+          SELECT daily_sub_plan_id FROM assignments WHERE id = ?
+        ) AND absence_id = ? AND source_schedule_entry_id = 'entry_priya_a_0940'`,
+    )
+      .bind(assignmentIds[0], absenceId)
+      .first<{ count: number }>();
+    expect(firstPlanCount?.count).toBe(1);
+  });
+
+  it('invalidates overlapping manual direct coverage when its teacher becomes absent', async () => {
+    const date = '2026-09-17';
+    await api('/api/plans/ensure', 'POST', { date, dayType: 'A' });
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_avery_bennett',
+      startDate: date,
+      endDate: date,
+      startTime: null,
+      endTime: null,
+    });
+    const initial = data<{
+      detail: { assignments: Array<{ id: string; startTime: string }> };
+    }>((await api(`/api/plans/${date}`)).payload).detail;
+    const assignmentId = initial.assignments.find(
+      (assignment) => assignment.startTime === '08:00',
+    )!.id;
+    await api(
+      `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`,
+      'POST',
+      {
+        action: 'assign',
+        staffId: 'staff_casey_brooks',
+        assignAnyway: false,
+      },
+    );
+
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_casey_brooks',
+      startDate: date,
+      endDate: date,
+      startTime: null,
+      endTime: null,
+    });
+    const invalidated = data<{
+      detail: {
+        assignments: Array<{
+          id: string;
+          status: string;
+          assignedStaff: unknown;
+          conflictExplanation: string | null;
+          defaultAction: unknown;
+        }>;
+      };
+    }>((await api(`/api/plans/${date}`)).payload).detail.assignments.find(
+      (assignment) => assignment.id === assignmentId,
+    );
+    expect(invalidated).toMatchObject({
+      status: 'unresolved',
+      assignedStaff: null,
+      conflictExplanation: 'Casey Brooks is also absent.',
+    });
+    expect(invalidated?.defaultAction).toBeTruthy();
+  });
+
+  it('invalidates split coverage and removes all stale segments when a split teacher becomes absent', async () => {
+    const date = '2026-09-18';
+    await api('/api/plans/ensure', 'POST', { date, dayType: 'A' });
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_jordan_kim',
+      startDate: date,
+      endDate: date,
+      startTime: null,
+      endTime: null,
+    });
+    const initial = data<{
+      detail: { assignments: Array<{ id: string; startTime: string }> };
+    }>((await api(`/api/plans/${date}`)).payload).detail;
+    const assignmentId = initial.assignments.find(
+      (assignment) => assignment.startTime === '08:00',
+    )!.id;
+    await api(
+      `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`,
+      'POST',
+      {
+        action: 'split',
+        assignAnyway: true,
+        segments: [
+          {
+            staffId: 'staff_riley_quinn',
+            startTime: '08:00',
+            endTime: '08:40',
+          },
+          {
+            staffId: 'staff_casey_brooks',
+            startTime: '08:40',
+            endTime: '08:50',
+          },
+        ],
+      },
+    );
+
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_casey_brooks',
+      startDate: date,
+      endDate: date,
+      startTime: '08:40',
+      endTime: '08:50',
+    });
+    const invalidated = data<{
+      detail: {
+        assignments: Array<{
+          id: string;
+          status: string;
+          resolutionType: string | null;
+          conflictExplanation: string | null;
+          segments: unknown[];
+        }>;
+      };
+    }>((await api(`/api/plans/${date}`)).payload).detail.assignments.find(
+      (assignment) => assignment.id === assignmentId,
+    );
+    expect(invalidated).toMatchObject({
+      status: 'unresolved',
+      resolutionType: null,
+      conflictExplanation:
+        'Casey Brooks, who was providing split coverage, is also absent.',
+      segments: [],
+    });
+    const segmentCount = await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM assignment_segments WHERE assignment_id = ?`,
+    )
+      .bind(assignmentId)
+      .first<{ count: number }>();
+    expect(segmentCount?.count).toBe(0);
+  });
+
+  it('keeps direct coverage assigned when a new partial absence does not overlap it', async () => {
+    const date = '2026-09-21';
+    await api('/api/plans/ensure', 'POST', { date, dayType: 'A' });
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_avery_bennett',
+      startDate: date,
+      endDate: date,
+      startTime: null,
+      endTime: null,
+    });
+    const initial = data<{
+      detail: { assignments: Array<{ id: string; startTime: string }> };
+    }>((await api(`/api/plans/${date}`)).payload).detail;
+    const assignmentId = initial.assignments.find(
+      (assignment) => assignment.startTime === '08:00',
+    )!.id;
+    await api(
+      `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`,
+      'POST',
+      {
+        action: 'assign',
+        staffId: 'staff_casey_brooks',
+        assignAnyway: false,
+      },
+    );
+
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_casey_brooks',
+      startDate: date,
+      endDate: date,
+      startTime: '09:00',
+      endTime: '09:30',
+    });
+    const unchanged = data<{
+      detail: {
+        assignments: Array<{
+          id: string;
+          status: string;
+          assignedStaff: { id: string } | null;
+          conflictExplanation: string | null;
+        }>;
+      };
+    }>((await api(`/api/plans/${date}`)).payload).detail.assignments.find(
+      (assignment) => assignment.id === assignmentId,
+    );
+    expect(unchanged).toMatchObject({
+      status: 'assigned',
+      assignedStaff: { id: 'staff_casey_brooks' },
+      conflictExplanation: null,
+    });
+  });
+
+  it('creates plans only for weekdays in Friday-to-Monday absence expansion', async () => {
+    const result = await api('/api/absences', 'POST', {
+      staffId: 'staff_priya_nair',
+      startDate: '2026-11-06',
+      endDate: '2026-11-09',
+      startTime: null,
+      endTime: null,
+    });
+    expect(result.response.status).toBe(201);
+    expect(data<{ dates: string[] }>(result.payload).dates).toEqual([
+      '2026-11-06',
+      '2026-11-09',
+    ]);
+    const plans = await testEnv.DB.prepare(
+      `SELECT date FROM daily_sub_plans
+        WHERE date BETWEEN '2026-11-06' AND '2026-11-09'
+        ORDER BY date`,
+    ).all<{ date: string }>();
+    expect(plans.results.map((plan) => plan.date)).toEqual([
+      '2026-11-06',
+      '2026-11-09',
+    ]);
+  });
+
+  it('accepts a weekend-only absence without creating a Daily Sub Plan or Assignment', async () => {
+    const date = '2026-11-14';
+    const result = await api('/api/absences', 'POST', {
+      staffId: 'staff_theo_wallace',
+      startDate: date,
+      endDate: date,
+      startTime: null,
+      endTime: null,
+    });
+    expect(result.response.status).toBe(201);
+    expect(data<{ dates: string[] }>(result.payload).dates).toEqual([]);
+    const planCount = await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM daily_sub_plans WHERE date = ?`,
+    )
+      .bind(date)
+      .first<{ count: number }>();
+    const assignmentCount = await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count
+         FROM assignments a
+         JOIN daily_sub_plans p ON p.id = a.daily_sub_plan_id
+        WHERE p.date = ?`,
+    )
+      .bind(date)
+      .first<{ count: number }>();
+    expect(planCount?.count).toBe(0);
+    expect(assignmentCount?.count).toBe(0);
   });
 
   it('creates and persists a valid 40/10 split', async () => {

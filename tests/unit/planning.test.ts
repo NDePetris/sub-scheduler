@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   affectedResponsibilities,
   calculatePlanPeriodsLost,
-  enumerateSchoolDates,
+  enumerateWeekdaySchoolDates,
   projectedPlanPeriodsLost,
   rankCandidates,
   renderSubPlanMessage,
@@ -51,12 +51,28 @@ describe('MVP planning domain', () => {
     ]);
   });
 
-  it('expands inclusive multi-day absences as calendar dates', () => {
-    expect(enumerateSchoolDates('2026-09-01', '2026-09-03')).toEqual([
-      '2026-09-01',
-      '2026-09-02',
-      '2026-09-03',
+  it('expands Monday through Friday as five weekday school dates', () => {
+    expect(enumerateWeekdaySchoolDates('2026-11-02', '2026-11-06')).toEqual([
+      '2026-11-02',
+      '2026-11-03',
+      '2026-11-04',
+      '2026-11-05',
+      '2026-11-06',
     ]);
+  });
+
+  it('skips weekends when expanding Friday through Monday', () => {
+    expect(enumerateWeekdaySchoolDates('2026-11-06', '2026-11-09')).toEqual([
+      '2026-11-06',
+      '2026-11-09',
+    ]);
+  });
+
+  it('handles same-day weekday and weekend ranges explicitly', () => {
+    expect(enumerateWeekdaySchoolDates('2026-11-09', '2026-11-09')).toEqual([
+      '2026-11-09',
+    ]);
+    expect(enumerateWeekdaySchoolDates('2026-11-14', '2026-11-14')).toEqual([]);
   });
 
   it('calculates the exact 1.25 Plan Period Equivalent example', () => {

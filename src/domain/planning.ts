@@ -79,7 +79,10 @@ export function affectedResponsibilities(
     });
 }
 
-export function enumerateSchoolDates(start: string, end: string): SchoolDate[] {
+export function enumerateWeekdaySchoolDates(
+  start: string,
+  end: string,
+): SchoolDate[] {
   const first = parseSchoolDate(start);
   const last = parseSchoolDate(end);
   if (first > last)
@@ -87,7 +90,11 @@ export function enumerateSchoolDates(start: string, end: string): SchoolDate[] {
   const dates: SchoolDate[] = [];
   let current = first;
   while (current <= last) {
-    dates.push(current);
+    const [year, month, day] = current.split('-').map(Number);
+    const weekday = new Date(
+      Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1),
+    ).getUTCDay();
+    if (weekday !== 0 && weekday !== 6) dates.push(current);
     current = shiftSchoolDate(current, 1);
   }
   return dates;
