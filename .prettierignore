@@ -1,0 +1,7 @@
+dist
+coverage
+.wrangler
+package-lock.json
+LICENSE
+AGENTS.md
+docs/

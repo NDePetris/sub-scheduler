@@ -1,0 +1,4 @@
+# Local-only identity adapter. This file is never deployed and .dev.vars is ignored.
+APP_ENV="local"
+DEV_USER_EMAIL="admin@sub-planning.test"
+

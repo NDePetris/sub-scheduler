@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">School Sub Planning</title>
+  <rect width="64" height="64" rx="14" fill="#7EA243"/>
+  <path d="M12 25 32 14l20 11-20 11L12 25Z" fill="#fff"/>
+  <path d="M20 31v10c7 6 17 7 24 0V31l-12 7-12-7Z" fill="#fff" fill-opacity=".9"/>
+  <path d="M51 28v15" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+</svg>

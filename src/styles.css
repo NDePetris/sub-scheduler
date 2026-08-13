@@ -1,0 +1,62 @@
+@import 'tailwindcss';
+
+:root {
+  color-scheme: light;
+  --brand: #7ea243;
+  --brand-dark: #5c7b2d;
+  --brand-soft: #eff5e7;
+  --canvas: #f5f6f4;
+  --foreground: #262a25;
+  --muted: #f1f2ef;
+  --muted-foreground: #687067;
+  --border: #dfe3dd;
+  --warning: #d08a18;
+  --warning-dark: #7a4a05;
+  --warning-soft: #fff7e5;
+  --danger: #c4473a;
+  --danger-dark: #8d2d24;
+  --danger-soft: #fff0ee;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+@theme inline {
+  --color-brand: var(--brand);
+  --color-brand-dark: var(--brand-dark);
+  --color-brand-soft: var(--brand-soft);
+  --color-canvas: var(--canvas);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-warning: var(--warning);
+  --color-warning-dark: var(--warning-dark);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-dark: var(--danger-dark);
+  --color-danger-soft: var(--danger-soft);
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  margin: 0;
+  min-width: 1024px;
+  min-height: 100vh;
+  background: var(--canvas);
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}

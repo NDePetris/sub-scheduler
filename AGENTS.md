@@ -11,7 +11,7 @@ Administrators remain the final authority. Recommendations and warnings must nev
 Use this precedence when requirements conflict:
 
 1. The current user/task instructions.
-2. [`docs/mvp-spec.md`](sources/mvp-spec.md), the product and acceptance source of truth.
+2. [`docs/mvp-spec.md`](docs/mvp-spec.md), the product and acceptance source of truth.
 3. [`docs/architecture.md`](docs/architecture.md), implementation guidance and recorded technical decisions.
 4. Existing tests and code, which describe current behavior but do not override the MVP spec.
 

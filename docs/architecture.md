@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-This document translates the MVP specification into implementation boundaries and system behavior. It is not a replacement for the product specification in [`../sources/mvp-spec.md`](../sources/mvp-spec.md). The MVP is one administrator-facing vertical slice:
+This document translates the MVP specification into implementation boundaries and system behavior. It is not a replacement for the product specification in [`mvp-spec.md`](mvp-spec.md). The MVP is one administrator-facing vertical slice:
 
 **Schedule Import → Date → Absence → Default Sub Plan → Resolve Assignments → Final Message**
 
@@ -268,6 +268,18 @@ The importer targets the stable school workbook format and exposes mappings/vali
 ### No student model and no outbound messaging
 
 Redistribution remains conceptual, and output stops at editable/copyable text. These are deliberate privacy and scope boundaries, not missing integrations.
+
+## Foundation implementation baseline
+
+The August 2026 foundation pass establishes these concrete implementation choices without implementing the MVP workflow:
+
+- The repository uses the official Cloudflare Vite plugin for one React SPA and one `worker/index.ts` API entry point. Static asset fallback handles client routes while `/api/*` runs through the Worker. Navigation metadata is isolated in the client app layer and does not define domain boundaries.
+- Tailwind CSS v4 design tokens and a small shadcn-compatible component layer provide the UI foundation. Branding comes from `application_settings`; the shell renders a configured logo URL or falls back to the school name and a neutral mark.
+- The initial forward-only D1 migration creates the relational core described above plus `authorized_users`. `application_settings` is a constrained single school row for MVP. Stable text IDs keep fixtures deterministic and do not make imported display names identities.
+- API responses use a consistent `{ ok, data }` or `{ ok, error }` envelope with a request ID. The setup API is intentionally narrow: health, bootstrap summary, and active staff.
+- Local and test identity is supplied only through server bindings and must still match an active `authorized_users` row. Other environments fail closed until a production adapter validates the Cloudflare Access assertion/JWT before applying the same allowlist. No request header is trusted as a development identity.
+- Generic workbook reading uses the universal `read-excel-file` ArrayBuffer path with explicit file, size, sheet, row, and column limits. A separate `SchoolScheduleAdapter` boundary owns future school-specific interpretation; generic parsing never activates a schedule.
+- Unit tests run in Vitest, while API and migration tests use Cloudflare's Workers Vitest integration with real D1 migrations and the same deterministic local seed SQL. This keeps the smoke path close to the deployed runtime without pointing tests at a remote database.
 
 ## When this document changes
 
