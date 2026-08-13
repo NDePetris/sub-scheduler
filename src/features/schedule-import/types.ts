@@ -5,6 +5,7 @@ export type WorkbookCell = CellValue | null;
 export interface WorkbookSheet {
   readonly name: string;
   readonly rows: readonly (readonly WorkbookCell[])[];
+  readonly mergedCells: readonly string[];
 }
 
 export interface ParsedWorkbook {

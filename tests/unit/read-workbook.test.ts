@@ -17,6 +17,7 @@ describe('generic workbook boundary', () => {
         ['Teacher', 'Day'],
         ['Avery Bennett', 'A'],
       ],
+      mergedCells: [],
     });
   });
 

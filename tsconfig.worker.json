@@ -24,7 +24,7 @@
   "include": [
     "worker",
     "src/domain",
-    "src/features/schedule-import",
+    "src/features/schedule-import/**/*.ts",
     "tests/integration"
   ]
 }

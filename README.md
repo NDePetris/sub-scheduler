@@ -1,6 +1,6 @@
 # School Sub Planning
 
-School Sub Planning is an internal administrator-facing web application for preparing daily substitute plans at a small K–12 school. This repository currently contains the production-capable technical foundation: a React interface calls a Cloudflare Worker API, which reads Cloudflare D1.
+School Sub Planning is an internal administrator-facing web application for preparing daily substitute plans at a small K–12 school. The locally usable MVP supports the complete persisted workflow: schedule import and activation, date/A-B selection, absences, generated Needs Sub Assignments, resolution, editable message generation, finalization, and reopening.
 
 The product source of truth is [docs/mvp-spec.md](docs/mvp-spec.md). Implementation boundaries and decisions are recorded in [docs/architecture.md](docs/architecture.md).
 
@@ -28,7 +28,7 @@ Apply all migrations and load the deterministic fictional seed data:
 npm run db:setup:local
 ```
 
-The command is safe to run repeatedly. It creates local state under `.wrangler/`, applies `migrations/0001_core_schema.sql`, and executes `seed/local.sql`. The seed contains fictional staff, rooms, A/B and shared schedule entries, PLAN and Admin blocks, a non-class responsibility, a School Sub, and school settings. It contains no student data.
+The command is safe to run repeatedly. It creates local state under `.wrangler/`, applies every forward-only migration, and executes `seed/local.sql`. The seed contains fictional staff, rooms, A/B and shared schedule entries, PLAN and Admin blocks, non-class responsibilities, a configured School Sub availability block, sanitized Default Sub Plan actions, and school settings. It contains no student data.
 
 The individual commands are also available:
 
@@ -53,7 +53,19 @@ Then start the full-stack Vite development server:
 npm run dev
 ```
 
-Open the URL printed by Vite. The Sub Plan shell fetches `/api/bootstrap`; the Worker verifies the local server-side identity against D1 and returns the seeded school, staff, room, and active schedule summary. `/api/health` provides a small database connectivity check.
+Open the URL printed by Vite. The Worker verifies the local server-side identity against D1 for every protected route. `/api/health` provides a small database connectivity check.
+
+## Exercise the MVP locally
+
+1. Open **Schedule** and upload `tests/fixtures/schedule-sample.xlsx` with an Effective From date.
+2. Review the detected worksheet, staff, rooms, A/B columns, staged blocks, warnings, and blocking errors.
+3. Map each imported label to an existing stable record, create records individually, or use **Create All Missing** for the sanitized role-label fixture.
+4. Activate the Schedule Version. Activation uses an atomic D1 batch and closes the preceding open-ended version immediately before the new Effective From date.
+5. Open **Sub Plan**, select a date covered by an active schedule, confirm A/B before recording absences, and use **Add Absence**.
+6. Open an Assignment to review its Default Sub Plan, candidates, availability source, Plan Periods Lost, projected workload, warnings, and override path. Direct, intentional-uncovered, structured, and split resolutions persist in D1.
+7. Use **Review & Finalize** to regenerate, edit, save, and copy the deterministic message, then finalize or reopen the plan.
+
+The seeded fictional schedule remains useful for deterministic Default Sub Plan and conflict testing. Production staff mappings, Default Sub Plans, authentication, school timezone, and School Sub availability require real-school configuration before deployment.
 
 `.dev.vars` is ignored by Git. The local adapter does not trust a browser-supplied email. In any environment other than `local` or `test`, the API fails closed until the future production identity adapter verifies a Cloudflare Access assertion/JWT and then checks the application allowlist.
 
@@ -102,7 +114,7 @@ seed/                       Repeatable fictional local seed data
 src/app/                    Application shell and navigation
 src/components/ui/          Accessible shared UI primitives
 src/domain/                 Pure date, time, interval, and schedule concepts
-src/features/               Workflow-aligned client/import modules
+src/features/               Persisted Sub Plan and schedule-import workflows
 src/lib/                    Shared browser utilities and API contract validation
 tests/fixtures/             Deterministic test fixture builders
 tests/unit/                 Runtime-independent domain/import tests
@@ -116,8 +128,4 @@ School logo configuration is represented in D1 and the shell already has a schoo
 
 ## Current boundary
 
-This foundation deliberately does not implement the primary MVP workflow yet. The next pass can build:
-
-**Schedule Import → Date → Absence → Default Sub Plan → Resolve Assignments → Final Message**
-
-on the existing schema, import adapter boundary, domain primitives, authenticated API context, and end-to-end D1 smoke path.
+The MVP vertical slice is implemented without student data, email delivery, teacher portals, arbitrary Word-document parsing, calendar synchronization, AI scheduling, or global optimization. Special one-day schedules are supported by the schedule-resolution service and persistence model; a polished Special Schedule administration screen remains deferred.

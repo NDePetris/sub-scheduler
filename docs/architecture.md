@@ -271,15 +271,30 @@ Redistribution remains conceptual, and output stops at editable/copyable text. T
 
 ## Foundation implementation baseline
 
-The August 2026 foundation pass establishes these concrete implementation choices without implementing the MVP workflow:
+The August 2026 foundation pass established these concrete implementation choices that the vertical slice continues to use:
 
 - The repository uses the official Cloudflare Vite plugin for one React SPA and one `worker/index.ts` API entry point. Static asset fallback handles client routes while `/api/*` runs through the Worker. Navigation metadata is isolated in the client app layer and does not define domain boundaries.
 - Tailwind CSS v4 design tokens and a small shadcn-compatible component layer provide the UI foundation. Branding comes from `application_settings`; the shell renders a configured logo URL or falls back to the school name and a neutral mark.
 - The initial forward-only D1 migration creates the relational core described above plus `authorized_users`. `application_settings` is a constrained single school row for MVP. Stable text IDs keep fixtures deterministic and do not make imported display names identities.
-- API responses use a consistent `{ ok, data }` or `{ ok, error }` envelope with a request ID. The setup API is intentionally narrow: health, bootstrap summary, and active staff.
+- API responses use a consistent `{ ok, data }` or `{ ok, error }` envelope with a request ID. The initial health, bootstrap summary, and active-staff routes now share that boundary with workflow endpoints.
 - Local and test identity is supplied only through server bindings and must still match an active `authorized_users` row. Other environments fail closed until a production adapter validates the Cloudflare Access assertion/JWT before applying the same allowlist. No request header is trusted as a development identity.
 - Generic workbook reading uses the universal `read-excel-file` ArrayBuffer path with explicit file, size, sheet, row, and column limits. A separate `SchoolScheduleAdapter` boundary owns future school-specific interpretation; generic parsing never activates a schedule.
 - Unit tests run in Vitest, while API and migration tests use Cloudflare's Workers Vitest integration with real D1 migrations and the same deterministic local seed SQL. This keeps the smoke path close to the deployed runtime without pointing tests at a remote database.
+
+## MVP vertical-slice implementation
+
+The August 2026 vertical-slice pass adds these concrete decisions:
+
+- `0002_preserve_plan_finalization.sql` rebuilds `daily_sub_plans` so Draft plans may retain a paired most-recent `finalized_at`/`finalized_by`. Finalization still requires both values; reopening changes only status and update audit fields.
+- `0003_schedule_import_staging.sql` stores import provenance, staff/room mappings, normalized staged blocks, and validation issues separately from active schedules. Activation joins staged values through stable identities and uses one D1 batch for prior-range closure, Schedule Version/entry creation, and import status.
+- The sanitized school adapter targets the single `SY27 Teacher Schedules` worksheet. Row 1 contains room labels, row 2 staff display values, row 3 contains explicit A/B labels only for paired columns, column A contains 10-minute wall-clock ranges, spacer columns are ignored, and vertical merged ranges define exact block ends. Unpaired staff columns are `ALL`. The adapter recognizes the fixture's PLAN, Admin, lunch, after-school/after-care, break, student-support, duty, and instructional notation; changing this workbook contract requires an adapter change rather than a universal mapper.
+- Because production A/B calendar configuration has not been supplied, a new plan infers an expected designation by alternating weekdays from the pinned normal Schedule Version's Effective From date, beginning with A. The administrator-selected value is stored on the plan. A/B may be changed only before an absence has generated Assignments, avoiding silent replacement of decisions; this is a reversible policy until the real calendar source is known.
+- Adding an absence pre-resolves or creates every affected date, intersects partial absence and schedule intervals, applies defaults, and writes the absence, plans, Assignments, and invalidated existing defaults in one D1 batch. Generated identity is the absence/source-entry pair and a unique index makes regeneration idempotent. Existing manual resolutions are never rewritten when another absence is added. If a newly absent teacher was used by an existing Default, the default reference remains while the Assignment returns to Unresolved with an explanation.
+- Candidate availability is calculated from the pinned schedule. PLAN and Admin blocks must cover the full proposed interval; configured School Sub availability is represented by the School Sub's covering `other` schedule block. Absences, scheduled responsibilities, direct coverage, and split segments produce explainable conflicts. Clearly conflicting assignment and split choices require a persisted override acknowledgement.
+- Workload is derived from direct and split coverage over each historical plan's pinned schedule. Only overlaps with the candidate's PLAN blocks contribute Plan Period Equivalents; Admin and School Sub coverage contribute zero. Threshold and calendar-window length come from `application_settings`.
+- Resolution writes use atomic batches where child segments are replaced. Split segments require exact, gap-free parent coverage but retain arbitrary valid times; the client presents the configured snap interval. Conceptual redistribution/combine/switch/move-room data uses validated action-specific JSON and never introduces a student model.
+- Generated messages are immutable regeneration versions with independently editable text. Editing updates only the latest message draft. Reopening retains the most recent finalization actor/time.
+- Special Schedules remain a backend/domain capability in this pass: an active date-specific schedule takes precedence and is pinned while the normal version remains pinned for context; normal resolution resumes on the following date. A polished Special Schedule administration screen is intentionally deferred.
 
 ## When this document changes
 

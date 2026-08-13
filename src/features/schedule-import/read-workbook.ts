@@ -1,4 +1,5 @@
 import readWorkbookFile, { type Sheet } from 'read-excel-file/universal';
+import { unzipSync } from 'fflate';
 
 import type {
   ParsedWorkbook,
@@ -70,7 +71,8 @@ export async function readWorkbook(
     );
   }
 
-  const sheets: WorkbookSheet[] = parsed.map(({ sheet, data }) => {
+  const mergedCellsBySheet = readMergedCellRanges(input, parsed.length);
+  const sheets: WorkbookSheet[] = parsed.map(({ sheet, data }, index) => {
     if (data.length > limits.maxRowsPerSheet) {
       throw new WorkbookReadError(
         'workbook_limit_exceeded',
@@ -84,8 +86,38 @@ export async function readWorkbook(
       );
     }
 
-    return { name: sheet, rows: data };
+    return {
+      name: sheet,
+      rows: data,
+      mergedCells: mergedCellsBySheet[index] ?? [],
+    };
   });
 
   return { sheets };
+}
+
+function readMergedCellRanges(
+  input: ArrayBuffer,
+  sheetCount: number,
+): readonly (readonly string[])[] {
+  try {
+    const archive = unzipSync(new Uint8Array(input), {
+      filter: (file) =>
+        /^xl\/worksheets\/sheet\d+\.xml$/.test(file.name) &&
+        file.originalSize <= 2 * 1024 * 1024,
+    });
+    const decoder = new TextDecoder();
+    return Array.from({ length: sheetCount }, (_, index) => {
+      const content = archive[`xl/worksheets/sheet${index + 1}.xml`];
+      if (!content) return [];
+      const xml = decoder.decode(content);
+      return [
+        ...xml.matchAll(/<mergeCell\s+ref="([A-Z]+\d+:[A-Z]+\d+)"\s*\/?\s*>/g),
+      ]
+        .map((match) => match[1])
+        .filter((range): range is string => range !== undefined);
+    });
+  } catch {
+    return Array.from({ length: sheetCount }, () => []);
+  }
 }

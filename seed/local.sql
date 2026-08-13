@@ -112,3 +112,33 @@ ON CONFLICT(id) DO UPDATE SET
   split_snap_minutes = excluded.split_snap_minutes,
   message_template = excluded.message_template,
   updated_by = excluded.updated_by;
+
+INSERT INTO default_sub_plans (
+  id, absent_staff_id, day_type, version, status, created_by, updated_by
+) VALUES (
+  'default_avery_shared', 'staff_avery_bennett', NULL, 1, 'active',
+  'user_local_admin', 'user_local_admin'
+)
+ON CONFLICT(id) DO UPDATE SET
+  absent_staff_id = excluded.absent_staff_id,
+  day_type = excluded.day_type,
+  version = excluded.version,
+  status = excluded.status,
+  updated_by = excluded.updated_by;
+
+INSERT INTO default_sub_plan_actions (
+  id, default_sub_plan_id, sequence, start_time, end_time, action_type,
+  assigned_staff_id, room_id, details_json
+) VALUES
+  ('default_avery_0800', 'default_avery_shared', 0, '08:00', '08:50', 'teacher_covers', 'staff_morgan_ellis', NULL, NULL),
+  ('default_avery_0850', 'default_avery_shared', 1, '08:50', '09:40', 'teacher_covers', 'staff_morgan_ellis', NULL, NULL),
+  ('default_avery_lunch', 'default_avery_shared', 2, '11:30', '12:00', 'leave_uncovered', NULL, NULL, '{"label":"Lunch responsibility may be left uncovered"}')
+ON CONFLICT(id) DO UPDATE SET
+  default_sub_plan_id = excluded.default_sub_plan_id,
+  sequence = excluded.sequence,
+  start_time = excluded.start_time,
+  end_time = excluded.end_time,
+  action_type = excluded.action_type,
+  assigned_staff_id = excluded.assigned_staff_id,
+  room_id = excluded.room_id,
+  details_json = excluded.details_json;

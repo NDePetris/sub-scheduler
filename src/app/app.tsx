@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { SubPlanFoundation } from '@/features/sub-plan/sub-plan-foundation';
+import { SubPlanWorkspace } from '@/features/sub-plan/sub-plan-workspace';
+import { ScheduleImportWorkspace } from '@/features/schedule-import/schedule-import-workspace';
 import { getBootstrapData, type BootstrapData } from '@/lib/api';
 
 import { ApplicationShell } from './application-shell';
@@ -55,13 +56,31 @@ export function App() {
 
   const activeItem = navigationItemForPath(path);
   const content =
-    activeItem.path === '/' ? (
-      <SubPlanFoundation
-        bootstrap={bootstrap}
-        error={error}
-        isLoading={isLoading}
-        onRetry={() => void loadBootstrap()}
-      />
+    activeItem.path === '/' && bootstrap ? (
+      <SubPlanWorkspace bootstrap={bootstrap} />
+    ) : activeItem.path === '/' ? (
+      <div className="mx-auto max-w-6xl">
+        {isLoading ? (
+          <div className="border-border rounded-lg border bg-white p-5 text-sm">
+            Loading school settings…
+          </div>
+        ) : (
+          <div
+            className="border-danger/30 bg-danger-soft text-danger-dark rounded-lg border p-5 text-sm"
+            role="alert"
+          >
+            <p>{error ?? 'The application API is unavailable.'}</p>
+            <button
+              className="mt-3 font-semibold underline"
+              onClick={() => void loadBootstrap()}
+            >
+              Retry connection
+            </button>
+          </div>
+        )}
+      </div>
+    ) : activeItem.path === '/schedule' ? (
+      <ScheduleImportWorkspace />
     ) : (
       <SectionPlaceholder item={activeItem} />
     );

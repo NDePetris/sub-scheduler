@@ -105,7 +105,7 @@ export function ApplicationShell({
               className="bg-brand size-1.5 rounded-full"
               aria-hidden="true"
             />
-            Foundation environment
+            Local MVP
           </Badge>
         </header>
         <div className="p-6">{children}</div>

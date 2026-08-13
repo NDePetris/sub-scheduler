@@ -15,7 +15,7 @@ Use this precedence when requirements conflict:
 3. [`docs/architecture.md`](docs/architecture.md), implementation guidance and recorded technical decisions.
 4. Existing tests and code, which describe current behavior but do not override the MVP spec.
 
-Do not edit, rename, move, or delete files under `sources/`; they are synced, read-only reference material. Do not duplicate the full MVP spec elsewhere. If implementation reveals a product ambiguity, preserve the documented terminology and workflow, make the narrowest reversible assumption, and record a consequential decision in `docs/architecture.md`.
+Do not duplicate the full MVP spec elsewhere. If implementation reveals a product ambiguity, preserve the documented terminology and workflow, make the narrowest reversible assumption, and record a consequential decision in `docs/architecture.md`.
 
 ## MVP boundaries
 

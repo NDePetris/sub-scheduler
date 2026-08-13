@@ -28,6 +28,11 @@ interface DayTypeCountRow {
   shared_count: number;
 }
 
+interface RoomRow {
+  id: string;
+  name: string;
+}
+
 export interface StaffSummary {
   readonly id: string;
   readonly displayName: string;
@@ -134,6 +139,15 @@ export class ApplicationRepository {
       .all<StaffRow>();
 
     return result.results.map(toStaffSummary);
+  }
+
+  async listActiveRooms() {
+    const result = await this.db
+      .prepare(
+        `SELECT id, name FROM rooms WHERE is_active = 1 ORDER BY name, id`,
+      )
+      .all<RoomRow>();
+    return result.results.map((row) => ({ id: row.id, name: row.name }));
   }
 }
 

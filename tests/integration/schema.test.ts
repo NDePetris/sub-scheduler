@@ -32,6 +32,11 @@ describe('initial migration and local seed', () => {
         'assignment_segments',
         'generated_messages',
         'application_settings',
+        'schedule_imports',
+        'schedule_import_staff',
+        'schedule_import_rooms',
+        'staged_schedule_entries',
+        'schedule_import_issues',
       ]),
     );
   });
