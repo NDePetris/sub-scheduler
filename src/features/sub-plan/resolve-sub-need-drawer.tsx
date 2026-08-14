@@ -154,43 +154,11 @@ export function ResolveSubNeedDrawer({
                 value={assignment.description}
               />
             </div>
-            <div className="col-span-2">
-              <Data
-                label="Current assignment"
-                value={currentAssignmentLabel(assignment)}
-              />
-            </div>
           </section>
 
-          <section>
-            <h3 className="text-muted-foreground text-xs font-bold tracking-wide uppercase">
-              Default Sub Plan
-            </h3>
-            <div className="border-border mt-2 rounded-md border p-3 text-sm">
-              {assignment.defaultAction ? (
-                <>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-semibold">
-                      {defaultActionLabel(assignment)}
-                    </span>
-                    <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-                      Default
-                    </Badge>
-                  </div>
-                  {assignment.conflictExplanation && (
-                    <p className="text-danger-dark mt-2 flex gap-1.5 text-xs">
-                      <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                      {assignment.conflictExplanation}
-                    </p>
-                  )}
-                </>
-              ) : (
-                <span className="text-muted-foreground">
-                  No matching structured default.
-                </span>
-              )}
-            </div>
-          </section>
+          {assignment.status !== 'unresolved' && (
+            <CurrentChoice assignment={assignment} />
+          )}
 
           <section aria-labelledby="assign-a-sub-title">
             <div>
@@ -201,6 +169,14 @@ export function ResolveSubNeedDrawer({
                 Recommended staff are automatically available and ordered by
                 preference, then recent Plan Periods Lost.
               </p>
+              {assignment.status === 'unresolved' &&
+                assignment.defaultAction &&
+                assignment.conflictExplanation && (
+                  <p className="text-danger-dark mt-2 flex gap-1.5 text-xs">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                    Default unavailable: {assignment.conflictExplanation}
+                  </p>
+                )}
             </div>
 
             <div className="mt-3 space-y-3" aria-busy={candidatesLoading}>
@@ -538,7 +514,9 @@ function CandidateCard({
   readonly onCancelOverride: () => void;
   readonly onConfirmOverride: () => void;
 }) {
-  const thresholdWarning = candidate.projectedBurden >= candidate.threshold;
+  const thresholdWarning =
+    candidate.projectedBurden !== null &&
+    candidate.projectedBurden >= candidate.threshold;
   return (
     <div className="p-3">
       <div className="flex items-start justify-between gap-3">
@@ -546,7 +524,7 @@ function CandidateCard({
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="font-semibold">{candidate.displayName}</span>
             <Badge>{availabilityLabel(candidate)}</Badge>
-            {candidate.availability === 'default' && (
+            {candidate.isDefaultCandidate && (
               <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
                 Default
               </Badge>
@@ -562,6 +540,18 @@ function CandidateCard({
               {conflict}
             </p>
           ))}
+          {candidate.warnings
+            .filter((warning) =>
+              warning.startsWith('Plan-time calculation needs'),
+            )
+            .map((warning) => (
+              <p
+                key={warning}
+                className="border-warning/40 bg-warning-soft text-warning-dark mt-2 rounded border px-2 py-1.5 text-xs font-semibold"
+              >
+                {warning}
+              </p>
+            ))}
           {thresholdWarning && (
             <p className="border-warning/40 bg-warning-soft text-warning-dark mt-2 rounded border px-2 py-1.5 text-xs font-semibold">
               After assignment, {candidate.projectedBurden.toFixed(2)} Plan
@@ -636,11 +626,14 @@ function WorkloadSummary({
       </p>
     );
   }
+  if (candidate.currentBurden === null || candidate.proposedBurden === null) {
+    return null;
+  }
   if (candidate.proposedBurden === 0) {
     return (
       <p className="text-muted-foreground mt-1 text-xs">
         <span className="font-semibold">Last {candidate.windowDays} days:</span>{' '}
-        {candidate.currentBurden.toFixed(2)} · This assignment does not use PLAN
+        {candidate.currentBurden.toFixed(2)} · This assignment does not use plan
         time.
       </p>
     );
@@ -654,10 +647,16 @@ function WorkloadSummary({
       <div>
         <dt className="font-semibold">This assignment</dt>
         <dd>+{candidate.proposedBurden.toFixed(2)}</dd>
+        <dd>
+          {candidate.standardPeriodSource === 'auto' ? 'Auto: ' : ''}
+          {candidate.standardPeriodMinutes}-minute standard period
+        </dd>
       </div>
       <div>
         <dt className="font-semibold">After assignment</dt>
-        <dd>{candidate.projectedBurden.toFixed(2)}</dd>
+        <dd>
+          {candidate.projectedBurden?.toFixed(2) ?? 'Needs configuration'}
+        </dd>
       </div>
     </dl>
   );
@@ -680,10 +679,12 @@ function availabilityLabel(candidate: CandidatePreview): string {
   if (candidate.availability === 'school_sub') return 'School Sub';
   if (candidate.availability === 'plan') return 'PLAN';
   if (candidate.availability === 'admin') return 'Admin';
-  if (candidate.availability === 'manual') return 'Not automatically available';
+  if (candidate.availability === 'open') return 'Available';
+  if (candidate.availability === 'manual') return 'Manual';
   if (candidate.availabilitySource === 'School Sub') return 'School Sub';
   if (candidate.availabilitySource === 'Plan Period') return 'PLAN';
   if (candidate.availabilitySource === 'Admin') return 'Admin';
+  if (candidate.availabilitySource === 'Available') return 'Available';
   return 'Manual';
 }
 
@@ -704,12 +705,48 @@ function currentAssignmentLabel(assignment: PlanAssignment): string {
   return 'Unresolved';
 }
 
-function defaultActionLabel(assignment: PlanAssignment): string {
-  const action = assignment.defaultAction;
-  if (!action) return 'No default';
-  if (action.staffName)
-    return `${action.staffName} · ${action.actionType.replaceAll('_', ' ')}`;
-  return action.actionType.replaceAll('_', ' ');
+function CurrentChoice({
+  assignment,
+}: {
+  readonly assignment: PlanAssignment;
+}) {
+  return (
+    <section>
+      <h3 className="text-muted-foreground text-xs font-bold tracking-wide uppercase">
+        Currently Chosen
+      </h3>
+      <div className="border-border mt-2 rounded-md border p-3 text-sm">
+        {assignment.assignedStaff ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-semibold">
+              {assignment.assignedStaff.displayName}
+            </span>
+            {assignment.resolutionSource && (
+              <Badge>{assignment.resolutionSource}</Badge>
+            )}
+            {assignment.isDefault && (
+              <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
+                Default
+              </Badge>
+            )}
+          </div>
+        ) : assignment.segments.length > 0 ? (
+          <div className="space-y-1">
+            {assignment.segments.map((segment) => (
+              <div key={segment.id}>
+                <span className="font-semibold">{segment.staffName}</span>{' '}
+                <span className="text-muted-foreground font-mono text-xs">
+                  {segment.startTime}–{segment.endTime}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span>{currentAssignmentLabel(assignment)}</span>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function ErrorBanner({ message }: { readonly message: string }) {

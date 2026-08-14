@@ -1,8 +1,12 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 
-import type { SchoolScheduleCandidate } from '../../src/features/schedule-import/school-schedule-adapter';
+import {
+  schoolScheduleAdapter,
+  type SchoolScheduleCandidate,
+} from '../../src/features/schedule-import/school-schedule-adapter';
 import { ImportRepository } from '../../worker/db/import-repository';
+import { PlanningRepository } from '../../worker/db/planning-repository';
 
 interface TestEnv {
   DB: D1Database;
@@ -35,6 +39,66 @@ function candidate(staff: string, room: string): SchoolScheduleCandidate {
 }
 
 describe.sequential('schedule import lifecycle', () => {
+  it('persists parsed Break responsibilities as coverable duties', async () => {
+    const parsed = schoolScheduleAdapter.parse({
+      sheets: [
+        {
+          name: 'SY27 Teacher Schedules',
+          mergedCells: [],
+          rows: [
+            [null, 'PRI-101'],
+            [null, 'Avery Bennett'],
+            [null, null],
+            ['10:00 - 10:10', 'Break'],
+          ],
+        },
+      ],
+    });
+    expect(parsed.candidate).not.toBeNull();
+    const repository = new ImportRepository(testEnv.DB);
+    const staged = await repository.stage({
+      kind: 'special',
+      name: 'Break Duty Schedule',
+      fileName: 'break-schedule.xlsx',
+      sha256: 'fixture-import-break-duty',
+      specialDate: '2030-01-07',
+      effectiveTo: null,
+      candidate: parsed.candidate!,
+      issues: parsed.issues,
+      actorId: 'user_local_admin',
+    });
+    const activated = await repository.activateSpecial(
+      staged.id,
+      'user_local_admin',
+    );
+    const entry = await testEnv.DB.prepare(
+      `SELECT activity_type, requires_sub FROM special_schedule_entries
+        WHERE special_schedule_id = ? AND description = 'Break'`,
+    )
+      .bind(activated.activatedSpecialScheduleId)
+      .first<{ activity_type: string; requires_sub: number }>();
+    expect(entry).toEqual({ activity_type: 'duty', requires_sub: 1 });
+    const planning = new PlanningRepository(testEnv.DB);
+    await planning.ensurePlan('2030-01-07', 'A', 'user_local_admin');
+    await planning.addAbsence(
+      {
+        staffId: 'staff_avery_bennett',
+        startDate: '2030-01-07',
+        endDate: '2030-01-07',
+        startTime: null,
+        endTime: null,
+      },
+      'user_local_admin',
+    );
+    const detail = await planning.getPlan('2030-01-07');
+    expect(detail.assignments).toContainEqual(
+      expect.objectContaining({
+        description: 'Break',
+        responsibilityType: 'duty',
+      }),
+    );
+  });
+
   it('stages exact identities and atomically activates a newer effective-dated schedule', async () => {
     const repository = new ImportRepository(testEnv.DB);
     const staged = await repository.stage({

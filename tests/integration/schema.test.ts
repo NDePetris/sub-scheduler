@@ -58,7 +58,7 @@ describe('initial migration and local seed', () => {
     }>();
 
     expect(staff?.count).toBe(7);
-    expect(entries?.count).toBe(28);
+    expect(entries?.count).toBe(27);
   });
 
   it('enforces half-open source intervals and partial-absence shape', async () => {

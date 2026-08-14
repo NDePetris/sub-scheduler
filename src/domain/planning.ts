@@ -5,9 +5,11 @@ import {
   type TimeInterval,
 } from './interval';
 import {
+  isSchoolDay,
   localTimeToMinutes,
   parseLocalTime,
   parseSchoolDate,
+  shiftCalendarDate,
   type SchoolDate,
 } from './calendar';
 import {
@@ -90,22 +92,14 @@ export function enumerateWeekdaySchoolDates(
   const dates: SchoolDate[] = [];
   let current = first;
   while (current <= last) {
-    const [year, month, day] = current.split('-').map(Number);
-    const weekday = new Date(
-      Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1),
-    ).getUTCDay();
-    if (weekday !== 0 && weekday !== 6) dates.push(current);
+    if (isSchoolDay(current)) dates.push(current);
     current = shiftSchoolDate(current, 1);
   }
   return dates;
 }
 
 export function shiftSchoolDate(date: string, days: number): SchoolDate {
-  const parsed = parseSchoolDate(date);
-  const [year, month, day] = parsed.split('-').map(Number);
-  const value = new Date(Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1));
-  value.setUTCDate(value.getUTCDate() + days);
-  return parseSchoolDate(value.toISOString().slice(0, 10));
+  return shiftCalendarDate(date, days);
 }
 
 export function expectedDayType(
@@ -121,11 +115,7 @@ export function expectedDayType(
     cursor <= target;
     cursor = shiftSchoolDate(cursor, 1)
   ) {
-    const [year, month, day] = cursor.split('-').map(Number);
-    const weekday = new Date(
-      Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1),
-    ).getUTCDay();
-    if (weekday !== 0 && weekday !== 6) schoolDays += 1;
+    if (isSchoolDay(cursor)) schoolDays += 1;
   }
   return schoolDays % 2 === 0 ? 'A' : 'B';
 }
@@ -162,7 +152,9 @@ export function inferStandardPeriodMinutes(
     const duration = intervalDurationMinutes(
       interval(entry.startTime, entry.endTime),
     );
-    counts.set(duration, (counts.get(duration) ?? 0) + 1);
+    if (duration === 40 || duration === 50) {
+      counts.set(duration, (counts.get(duration) ?? 0) + 1);
+    }
   }
   return (
     [...counts.entries()].sort(
@@ -177,7 +169,6 @@ export function resolveStandardPeriodMinutes(input: {
   readonly dayType: PlanDayType;
   readonly normalEntries: readonly StandardPeriodScheduleEntry[];
   readonly applicableEntries?: readonly StandardPeriodScheduleEntry[];
-  readonly fallbackPlanBlocks?: readonly PlanBlock[];
 }): number | null {
   if (input.configuredMinutes && input.configuredMinutes > 0) {
     return input.configuredMinutes;
@@ -189,40 +180,35 @@ export function resolveStandardPeriodMinutes(input: {
     input.dayType,
   );
   if (applicable) return applicable;
-  const fallbackDurations = (input.fallbackPlanBlocks ?? [])
-    .map((block) =>
-      intervalDurationMinutes(interval(block.startTime, block.endTime)),
-    )
-    .filter((duration) => duration > 0)
-    .sort((left, right) => left - right);
-  return fallbackDurations[0] ?? null;
+  return null;
 }
 
 export function calculatePlanPeriodsLost(
   planBlocks: readonly PlanBlock[],
   coverage: readonly CoverageInterval[],
   standardPeriodMinutes?: number | null,
-): number {
+): number | null {
   let total = 0;
   for (const planBlock of planBlocks) {
     const block = interval(planBlock.startTime, planBlock.endTime);
-    const duration =
-      standardPeriodMinutes && standardPeriodMinutes > 0
-        ? standardPeriodMinutes
-        : intervalDurationMinutes(block);
     for (const segment of coverage) {
-      total +=
-        overlapMinutes(block, interval(segment.startTime, segment.endTime)) /
-        duration;
+      const minutes = overlapMinutes(
+        block,
+        interval(segment.startTime, segment.endTime),
+      );
+      if (minutes === 0) continue;
+      if (!standardPeriodMinutes || standardPeriodMinutes <= 0) return null;
+      total += minutes / standardPeriodMinutes;
     }
   }
   return roundBurden(total);
 }
 
 export function projectedPlanPeriodsLost(
-  current: number,
-  proposed: number,
-): number {
+  current: number | null,
+  proposed: number | null,
+): number | null {
+  if (current === null || proposed === null) return null;
   return roundBurden(current + proposed);
 }
 
@@ -265,13 +251,14 @@ export function validateSplitSegments(
 }
 
 export type CandidateAvailability =
-  'default' | 'school_sub' | 'plan' | 'admin' | 'manual';
+  'default' | 'school_sub' | 'plan' | 'admin' | 'open' | 'manual';
 
 export interface RankedCandidate {
   readonly id: string;
   readonly displayName: string;
   readonly availability: CandidateAvailability;
-  readonly currentBurden: number;
+  readonly currentBurden: number | null;
+  readonly workloadKnown?: boolean;
   readonly conflicts?: readonly unknown[];
 }
 
@@ -282,15 +269,20 @@ export function rankCandidates<T extends RankedCandidate>(
     default: 0,
     school_sub: 1,
     plan: 2,
-    admin: 3,
-    manual: 4,
+    admin: 2,
+    open: 2,
+    manual: 3,
   };
   return [...candidates].sort(
     (left, right) =>
       Number(right.availability !== 'manual' && !right.conflicts?.length) -
         Number(left.availability !== 'manual' && !left.conflicts?.length) ||
       tier[left.availability] - tier[right.availability] ||
-      left.currentBurden - right.currentBurden ||
+      Number(!(left.workloadKnown ?? left.currentBurden !== null)) -
+        Number(!(right.workloadKnown ?? right.currentBurden !== null)) ||
+      Number(left.currentBurden === null) -
+        Number(right.currentBurden === null) ||
+      (left.currentBurden ?? 0) - (right.currentBurden ?? 0) ||
       left.displayName.localeCompare(right.displayName) ||
       left.id.localeCompare(right.id),
   );

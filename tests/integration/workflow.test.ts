@@ -25,6 +25,39 @@ function data<T>(payload: unknown): T {
 }
 
 describe('persisted MVP workflow', () => {
+  it('uses normalized Teacher records and stable IDs for repeated Add Absence submissions', async () => {
+    const staffResult = await api('/api/staff');
+    const staff = data<{
+      staff: Array<{ id: string; displayName: string; role: string }>;
+    }>(staffResult.payload).staff;
+    const teachers = staff.filter((person) => person.role === 'Teacher');
+    expect(teachers.map((person) => person.id)).toEqual(
+      expect.arrayContaining(['staff_priya_nair', 'staff_theo_wallace']),
+    );
+    expect(teachers.some((person) => person.role === 'Administrator')).toBe(
+      false,
+    );
+    expect(teachers.some((person) => person.role === 'Staff')).toBe(false);
+
+    const date = '2026-12-01';
+    for (const staffId of ['staff_priya_nair', 'staff_theo_wallace']) {
+      const result = await api('/api/absences', 'POST', {
+        staffId,
+        startDate: date,
+        endDate: date,
+        startTime: null,
+        endTime: null,
+      });
+      expect(result.response.status).toBe(201);
+    }
+    const detail = data<{ detail: { absences: Array<{ staffId: string }> } }>(
+      (await api(`/api/plans/${date}`)).payload,
+    ).detail;
+    expect(detail.absences.map((absence) => absence.staffId)).toEqual(
+      expect.arrayContaining(['staff_priya_nair', 'staff_theo_wallace']),
+    );
+  });
+
   it('applies valid defaults, resolves non-class needs, generates a message, and preserves finalization on reopen', async () => {
     const date = '2026-09-08';
     expect(
@@ -258,13 +291,23 @@ describe('persisted MVP workflow', () => {
            ('staff_candidate_plan', 'Candidate Plan', 'teacher', 1, 1, 0),
            ('staff_candidate_low', 'Candidate Lower Burden', 'teacher', 1, 1, 0),
            ('staff_candidate_admin', 'Candidate Admin', 'administrator', 1, 1, 0),
+           ('staff_candidate_open', 'Candidate Open', 'teacher', 1, 1, 0),
            ('staff_candidate_manual', 'Candidate Manual', 'teacher', 1, 1, 0),
+           ('staff_candidate_unknown', 'Candidate Unknown', 'teacher', 1, 1, 0),
            ('staff_candidate_threshold', 'Candidate Threshold', 'teacher', 1, 1, 0),
-           ('staff_candidate_conflict', 'Candidate Conflict', 'teacher', 1, 1, 0)`,
+           ('staff_candidate_conflict', 'Candidate Conflict', 'teacher', 1, 1, 0),
+           ('staff_school_admin', 'School Sub Admin Role', 'administrator', 1, 1, 1),
+           ('staff_school_plan', 'School Sub Teacher Role', 'teacher', 1, 1, 1),
+           ('staff_school_absent', 'School Sub Absent', 'teacher', 1, 1, 1),
+           ('staff_school_booked', 'School Sub Booked', 'staff', 1, 1, 1)`,
       ),
       testEnv.DB.prepare(
         `UPDATE staff SET standard_period_minutes = 50
           WHERE id = 'staff_candidate_low'`,
+      ),
+      testEnv.DB.prepare(
+        `UPDATE staff SET standard_period_minutes = 40
+          WHERE id = 'staff_candidate_threshold'`,
       ),
       testEnv.DB.prepare(
         `INSERT INTO schedule_entries (
@@ -276,6 +319,12 @@ describe('persisted MVP workflow', () => {
            ('candidate_low_0900', 'schedule_2026_fall', 'staff_candidate_low', 'A', '09:00', '09:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
            ('candidate_low_0940', 'schedule_2026_fall', 'staff_candidate_low', 'A', '09:40', '10:20', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
            ('candidate_admin_0900', 'schedule_2026_fall', 'staff_candidate_admin', 'A', '09:00', '10:20', 'admin', 'PLAN_ADMIN', 'Admin', NULL, 0),
+           ('candidate_open_later', 'schedule_2026_fall', 'staff_candidate_open', 'A', '13:30', '14:10', 'instruction', 'HS', 'Later Class', 'room_hs_lab', 1),
+           ('candidate_unknown_plan', 'schedule_2026_fall', 'staff_candidate_unknown', 'A', '09:00', '10:20', 'plan', 'PLAN_ADMIN', 'Merged PLAN', NULL, 0),
+           ('candidate_unknown_instruction_80', 'schedule_2026_fall', 'staff_candidate_unknown', 'A', '13:30', '14:50', 'instruction', 'HS', 'Merged 80-minute class', 'room_hs_lab', 1),
+           ('candidate_unknown_instruction_100', 'schedule_2026_fall', 'staff_candidate_unknown', 'A', '15:00', '16:40', 'instruction', 'HS', 'Merged 100-minute class', 'room_hs_lab', 1),
+           ('school_admin_0900', 'schedule_2026_fall', 'staff_school_admin', 'A', '09:00', '10:20', 'admin', 'PLAN_ADMIN', 'Admin', NULL, 0),
+           ('school_plan_0900', 'schedule_2026_fall', 'staff_school_plan', 'A', '09:00', '10:20', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
            ('candidate_conflict_plan', 'schedule_2026_fall', 'staff_candidate_conflict', 'A', '09:00', '09:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
            ('candidate_conflict_class', 'schedule_2026_fall', 'staff_candidate_conflict', 'A', '09:00', '09:40', 'instruction', 'INT', 'INT Math', 'room_int_301', 1),
            ('candidate_threshold_0900', 'schedule_2026_fall', 'staff_candidate_threshold', 'A', '09:00', '09:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
@@ -308,6 +357,14 @@ describe('persisted MVP workflow', () => {
            ('candidate_prior_absence', 'staff_jordan_kim', ?, ?, NULL, NULL, 'user_local_admin', 'user_local_admin')`,
       ).bind(targetDate, targetDate, priorDate, priorDate),
       testEnv.DB.prepare(
+        `INSERT INTO absences (
+           id, staff_id, start_date, end_date, start_time, end_time,
+           created_by, updated_by
+         ) VALUES
+           ('candidate_school_absence', 'staff_school_absent', ?, ?, NULL, NULL, 'user_local_admin', 'user_local_admin'),
+           ('candidate_booked_absence', 'staff_jordan_kim', ?, ?, NULL, NULL, 'user_local_admin', 'user_local_admin')`,
+      ).bind(targetDate, targetDate, targetDate, targetDate),
+      testEnv.DB.prepare(
         `INSERT INTO default_sub_plan_actions (
            id, default_sub_plan_id, sequence, start_time, end_time,
            action_type, assigned_staff_id, room_id, details_json
@@ -331,6 +388,20 @@ describe('persisted MVP workflow', () => {
            ('candidate_prior_threshold', 'candidate_prior_plan', 'candidate_prior_absence', 'candidate_prior_threshold_source', NULL, '10:00', '13:10', 'instruction', 'Prior Threshold', 'room_el_204', NULL, 'staff_candidate_threshold', 'teacher_cover', 'assigned', 0, 'user_local_admin')`,
       ),
       testEnv.DB.prepare(
+        `INSERT INTO assignments (
+           id, daily_sub_plan_id, absence_id, source_schedule_entry_id,
+           source_special_schedule_entry_id, start_time, end_time,
+           responsibility_type, description, room_id, default_action_id,
+           assigned_staff_id, resolution_type, status, is_default, updated_by
+         ) VALUES (
+           'candidate_school_booked_coverage', 'candidate_target_plan',
+           'candidate_booked_absence', 'candidate_target_span_source', NULL,
+           '09:00', '09:40', 'instruction', 'Existing Coverage',
+           'room_pri_101', NULL, 'staff_school_booked', 'teacher_cover',
+           'assigned', 0, 'user_local_admin'
+         )`,
+      ),
+      testEnv.DB.prepare(
         `INSERT INTO assignment_segments (
            id, assignment_id, start_time, end_time, staff_id, sequence
          ) VALUES
@@ -341,13 +412,16 @@ describe('persisted MVP workflow', () => {
 
     type Candidate = {
       id: string;
+      role: string;
       availability: string;
       availabilitySource: string;
       conflicts: string[];
       warnings: string[];
-      currentBurden: number;
-      proposedBurden: number;
-      projectedBurden: number;
+      currentBurden: number | null;
+      proposedBurden: number | null;
+      projectedBurden: number | null;
+      standardPeriodMinutes: number | null;
+      standardPeriodSource: 'configured' | 'auto' | null;
       windowDays: number;
     };
     async function candidatesFor(id: string) {
@@ -365,10 +439,13 @@ describe('persisted MVP workflow', () => {
       currentBurden: 1.5,
       proposedBurden: 1,
       projectedBurden: 2.5,
+      standardPeriodMinutes: 40,
+      standardPeriodSource: 'auto',
       windowDays: 7,
     });
-    expect(whole[1]).toMatchObject({
-      id: 'staff_riley_quinn',
+    expect(
+      whole.find((candidate) => candidate.id === 'staff_riley_quinn'),
+    ).toMatchObject({
       availability: 'school_sub',
       currentBurden: 0,
       proposedBurden: 0,
@@ -393,15 +470,28 @@ describe('persisted MVP workflow', () => {
     const conflicted = partial.find(
       (candidate) => candidate.id === 'staff_candidate_conflict',
     );
+    const open = partial.find(
+      (candidate) => candidate.id === 'staff_candidate_open',
+    );
+    const unknown = partial.find(
+      (candidate) => candidate.id === 'staff_candidate_unknown',
+    );
     expect(candidatePlan).toMatchObject({
       availability: 'plan',
       currentBurden: 1.5,
       proposedBurden: 0.5,
       projectedBurden: 2,
+      standardPeriodMinutes: 40,
+      standardPeriodSource: 'auto',
     });
     expect(
       partial.find((candidate) => candidate.id === 'staff_candidate_low'),
-    ).toMatchObject({ proposedBurden: 0.4, projectedBurden: 0.4 });
+    ).toMatchObject({
+      proposedBurden: 0.4,
+      projectedBurden: 0.4,
+      standardPeriodMinutes: 50,
+      standardPeriodSource: 'configured',
+    });
     expect(threshold).toMatchObject({
       availability: 'plan',
       currentBurden: 4.75,
@@ -414,6 +504,11 @@ describe('persisted MVP workflow', () => {
       availabilitySource: 'Admin',
       proposedBurden: 0,
     });
+    expect(open).toMatchObject({
+      availability: 'open',
+      availabilitySource: 'Available',
+      proposedBurden: 0,
+    });
     expect(schoolSub).toMatchObject({
       availability: 'school_sub',
       currentBurden: 0,
@@ -423,11 +518,61 @@ describe('persisted MVP workflow', () => {
       availability: 'manual',
       warnings: [],
     });
+    expect(unknown).toMatchObject({
+      availability: 'plan',
+      proposedBurden: null,
+      projectedBurden: null,
+      standardPeriodMinutes: null,
+    });
+    expect(unknown?.warnings).toContain(
+      'Plan-time calculation needs staff configuration.',
+    );
+    for (const id of [
+      'staff_riley_quinn',
+      'staff_school_admin',
+      'staff_school_plan',
+    ]) {
+      expect(partial.find((candidate) => candidate.id === id)).toMatchObject({
+        availability: 'school_sub',
+        currentBurden: 0,
+        proposedBurden: 0,
+      });
+    }
+    expect(
+      partial.find((candidate) => candidate.id === 'staff_riley_quinn')?.role,
+    ).toBe('Staff');
+    expect(
+      partial.find((candidate) => candidate.id === 'staff_school_admin')?.role,
+    ).toBe('Administrator');
+    expect(
+      partial.find((candidate) => candidate.id === 'staff_school_plan')?.role,
+    ).toBe('Teacher');
+    expect(
+      partial.find((candidate) => candidate.id === 'staff_school_absent')
+        ?.conflicts,
+    ).toContain('School Sub Absent is absent during this Assignment.');
+    expect(
+      partial
+        .find((candidate) => candidate.id === 'staff_school_booked')
+        ?.conflicts.join(' '),
+    ).toContain('Overlapping sub coverage');
     expect(conflicted?.conflicts).toContain(
       'Scheduled conflict: INT Math, 09:00–09:40.',
     );
     expect(
       partial.findIndex((candidate) => candidate.id === 'staff_candidate_low'),
+    ).toBeLessThan(
+      partial.findIndex((candidate) => candidate.id === 'staff_candidate_plan'),
+    );
+    expect(
+      partial.findIndex(
+        (candidate) => candidate.id === 'staff_candidate_admin',
+      ),
+    ).toBeLessThan(
+      partial.findIndex((candidate) => candidate.id === 'staff_candidate_plan'),
+    );
+    expect(
+      partial.findIndex((candidate) => candidate.id === 'staff_candidate_open'),
     ).toBeLessThan(
       partial.findIndex((candidate) => candidate.id === 'staff_candidate_plan'),
     );
@@ -790,6 +935,21 @@ describe('persisted MVP workflow', () => {
       .first<{ count: number }>();
     expect(planCount?.count).toBe(0);
     expect(assignmentCount?.count).toBe(0);
+  });
+
+  it('rejects direct weekend Daily Sub Plan creation', async () => {
+    const date = '2026-11-14';
+    const result = await api('/api/plans/ensure', 'POST', {
+      date,
+      dayType: 'A',
+    });
+    expect(result.response.status).toBe(400);
+    const planCount = await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM daily_sub_plans WHERE date = ?`,
+    )
+      .bind(date)
+      .first<{ count: number }>();
+    expect(planCount?.count).toBe(0);
   });
 
   it('creates and persists a valid 40/10 split', async () => {

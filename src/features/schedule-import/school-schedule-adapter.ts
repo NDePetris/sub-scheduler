@@ -249,7 +249,14 @@ function classifyActivity(description: string): {
       requiresSub: true,
     };
   }
-  if (normalized.includes('break') || normalized === 'student support') {
+  if (/\bbreak\b/.test(normalized)) {
+    return {
+      activityType: 'duty',
+      category: 'AFTER_SCHOOL_OTHER',
+      requiresSub: true,
+    };
+  }
+  if (normalized === 'student support') {
     return {
       activityType: 'other',
       category: 'AFTER_SCHOOL_OTHER',

@@ -61,3 +61,38 @@ export function compareSchoolDates(
 export function compareLocalTimes(left: LocalTime, right: LocalTime): number {
   return localTimeToMinutes(left) - localTimeToMinutes(right);
 }
+
+export function isSchoolDay(date: string): boolean {
+  const parsed = parseSchoolDate(date);
+  const [year, month, day] = parsed.split('-').map(Number);
+  const weekday = new Date(
+    Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1),
+  ).getUTCDay();
+  return weekday !== 0 && weekday !== 6;
+}
+
+export function shiftCalendarDate(date: string, days: number): SchoolDate {
+  const parsed = parseSchoolDate(date);
+  const [year, month, day] = parsed.split('-').map(Number);
+  const value = new Date(Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1));
+  value.setUTCDate(value.getUTCDate() + days);
+  return parseSchoolDate(value.toISOString().slice(0, 10));
+}
+
+export function shiftSchoolDay(date: string, schoolDays: number): SchoolDate {
+  let current = parseSchoolDate(date);
+  if (schoolDays === 0) return current;
+  const direction = schoolDays > 0 ? 1 : -1;
+  let remaining = Math.abs(schoolDays);
+  while (remaining > 0) {
+    current = shiftCalendarDate(current, direction);
+    if (isSchoolDay(current)) remaining -= 1;
+  }
+  return current;
+}
+
+export function normalizeToSchoolDay(date: string): SchoolDate {
+  let current = parseSchoolDate(date);
+  while (!isSchoolDay(current)) current = shiftCalendarDate(current, 1);
+  return current;
+}

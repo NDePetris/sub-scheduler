@@ -4,6 +4,7 @@ import {
   affectedResponsibilities,
   calculatePlanPeriodsLost,
   enumerateWeekdaySchoolDates,
+  expectedDayType,
   inferStandardPeriodMinutes,
   projectedPlanPeriodsLost,
   rankCandidates,
@@ -77,6 +78,11 @@ describe('MVP planning domain', () => {
     expect(enumerateWeekdaySchoolDates('2026-11-14', '2026-11-14')).toEqual([]);
   });
 
+  it('does not advance A/B rotation over a weekend', () => {
+    expect(expectedDayType('2026-11-06', '2026-11-06')).toBe('A');
+    expect(expectedDayType('2026-11-09', '2026-11-06')).toBe('B');
+  });
+
   it('calculates the exact 1.25 Plan Period Equivalent example', () => {
     expect(
       calculatePlanPeriodsLost(
@@ -85,6 +91,7 @@ describe('MVP planning domain', () => {
           { startTime: '09:40', endTime: '10:20' },
         ],
         [{ startTime: '09:00', endTime: '09:50' }],
+        40,
       ),
     ).toBe(1.25);
   });
@@ -186,6 +193,92 @@ describe('MVP planning domain', () => {
     ).toBe(40);
   });
 
+  it('uses the shorter supported duration when 40 and 50 evidence tie', () => {
+    expect(
+      inferStandardPeriodMinutes(
+        [
+          {
+            dayType: 'ALL',
+            startTime: '08:00',
+            endTime: '08:50',
+            activityType: 'instruction',
+          },
+          {
+            dayType: 'ALL',
+            startTime: '09:00',
+            endTime: '09:40',
+            activityType: 'instruction',
+          },
+        ],
+        'A',
+      ),
+    ).toBe(40);
+  });
+
+  it('ignores merged instructional blocks and never falls back to merged PLAN for Auto', () => {
+    const mergedEntries = [
+      {
+        dayType: 'ALL' as const,
+        startTime: '08:00',
+        endTime: '09:20',
+        activityType: 'instruction',
+      },
+      {
+        dayType: 'ALL' as const,
+        startTime: '09:30',
+        endTime: '11:10',
+        activityType: 'instruction',
+      },
+    ];
+    expect(inferStandardPeriodMinutes(mergedEntries, 'A')).toBeNull();
+    expect(
+      resolveStandardPeriodMinutes({
+        configuredMinutes: null,
+        dayType: 'A',
+        normalEntries: mergedEntries,
+        applicableEntries: mergedEntries,
+      }),
+    ).toBeNull();
+    expect(
+      calculatePlanPeriodsLost(
+        [{ startTime: '09:00', endTime: '10:20' }],
+        [{ startTime: '09:00', endTime: '09:40' }],
+        null,
+      ),
+    ).toBeNull();
+  });
+
+  it('uses supported 40-minute evidence despite common merged instruction blocks', () => {
+    const entries = [
+      {
+        dayType: 'ALL' as const,
+        startTime: '08:00',
+        endTime: '09:20',
+        activityType: 'instruction',
+      },
+      {
+        dayType: 'ALL' as const,
+        startTime: '09:30',
+        endTime: '11:10',
+        activityType: 'instruction',
+      },
+      {
+        dayType: 'ALL' as const,
+        startTime: '13:30',
+        endTime: '14:10',
+        activityType: 'instruction',
+      },
+    ];
+    expect(inferStandardPeriodMinutes(entries, 'A')).toBe(40);
+    expect(
+      calculatePlanPeriodsLost(
+        [{ startTime: '11:30', endTime: '12:50' }],
+        [{ startTime: '11:30', endTime: '12:10' }],
+        inferStandardPeriodMinutes(entries, 'A'),
+      ),
+    ).toBe(1);
+  });
+
   it('previews a configured threshold crossing before assignment', () => {
     expect(projectedPlanPeriodsLost(4.75, 0.5)).toBe(5.25);
   });
@@ -205,7 +298,7 @@ describe('MVP planning domain', () => {
     ).toThrow('without gaps or overlaps');
   });
 
-  it('orders defaults, School Sub, PLAN, Admin, and manual candidates deterministically', () => {
+  it('orders Default, School Sub, one shared automatic tier, and manual candidates deterministically', () => {
     const result = rankCandidates([
       {
         id: 'manual',
@@ -250,13 +343,28 @@ describe('MVP planning domain', () => {
         availability: 'admin',
         currentBurden: 0,
       },
+      {
+        id: 'open',
+        displayName: 'Open',
+        availability: 'open',
+        currentBurden: 0.25,
+      },
+      {
+        id: 'unknown',
+        displayName: 'Unknown',
+        availability: 'plan',
+        currentBurden: 0,
+        workloadKnown: false,
+      },
     ]);
     expect(result.map((candidate) => candidate.id)).toEqual([
       'default',
       'school',
+      'admin',
+      'open',
       'plan-low',
       'plan-high',
-      'admin',
+      'unknown',
       'school-conflict',
       'manual',
     ]);

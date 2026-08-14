@@ -146,11 +146,11 @@ describe.sequential('exclusive normal or Special Schedule sources', () => {
   it('fails clearly and atomically when no schedule source is available', async () => {
     const planning = new PlanningRepository(testEnv.DB);
     await expectHttpError(
-      planning.ensurePlan('2025-02-01', 'A', actorId),
+      planning.ensurePlan('2025-02-03', 'A', actorId),
       'no_schedule_for_date',
     );
     const row = await testEnv.DB.prepare(
-      `SELECT id FROM daily_sub_plans WHERE date = '2025-02-01'`,
+      `SELECT id FROM daily_sub_plans WHERE date = '2025-02-03'`,
     ).first();
     expect(row).toBeNull();
   });

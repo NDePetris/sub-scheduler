@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   compareSchoolDates,
+  isSchoolDay,
   localTimeToMinutes,
+  normalizeToSchoolDay,
   parseLocalTime,
   parseSchoolDate,
+  shiftSchoolDay,
 } from '../../src/domain/calendar';
 
 describe('school calendar values', () => {
@@ -25,5 +28,13 @@ describe('school calendar values', () => {
     expect(localTimeToMinutes(parseLocalTime('09:40'))).toBe(580);
     expect(() => parseLocalTime('24:00')).toThrow('outside');
     expect(() => parseLocalTime('9:40')).toThrow('HH:MM');
+  });
+
+  it('centralizes weekday navigation and weekend normalization', () => {
+    expect(isSchoolDay('2026-11-06')).toBe(true);
+    expect(isSchoolDay('2026-11-07')).toBe(false);
+    expect(shiftSchoolDay('2026-11-06', 1)).toBe('2026-11-09');
+    expect(shiftSchoolDay('2026-11-09', -1)).toBe('2026-11-06');
+    expect(normalizeToSchoolDay('2026-11-14')).toBe('2026-11-16');
   });
 });

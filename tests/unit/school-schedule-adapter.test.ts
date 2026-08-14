@@ -54,4 +54,40 @@ describe('sanitized school schedule adapter', () => {
       }),
     );
   });
+
+  it('classifies Break as coverable duty without matching Breakfast', () => {
+    const result = schoolScheduleAdapter.parse({
+      sheets: [
+        {
+          name: 'SY27 Teacher Schedules',
+          mergedCells: [],
+          rows: [
+            [null, '101'],
+            [null, 'Test Teacher'],
+            [null, null],
+            ['8:00 - 8:10', 'Break'],
+            ['8:10 - 8:20', '10 Minute Break'],
+            ['8:20 - 8:30', 'Morning Break'],
+            ['8:30 - 8:40', 'Breakfast'],
+            ['8:40 - 8:50', 'Student Support'],
+          ],
+        },
+      ],
+    });
+    const byDescription = new Map(
+      result.candidate?.entries.map((entry) => [entry.description, entry]),
+    );
+    for (const label of ['Break', '10 Minute Break', 'Morning Break']) {
+      expect(byDescription.get(label)).toMatchObject({
+        activityType: 'duty',
+        requiresSub: true,
+        category: 'AFTER_SCHOOL_OTHER',
+      });
+    }
+    expect(byDescription.get('Breakfast')?.activityType).not.toBe('duty');
+    expect(byDescription.get('Student Support')).toMatchObject({
+      activityType: 'other',
+      requiresSub: false,
+    });
+  });
 });

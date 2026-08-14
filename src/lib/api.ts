@@ -1,9 +1,11 @@
 import { z } from 'zod';
 
+import type { StaffRole } from '@/domain/staff';
+
 const staffSchema = z.object({
   id: z.string(),
   displayName: z.string(),
-  role: z.string(),
+  role: z.enum(['Teacher', 'Administrator', 'Staff']),
   isSchoolSub: z.boolean(),
 });
 
@@ -55,11 +57,11 @@ export type BootstrapData = z.infer<typeof bootstrapSchema>;
 export interface StaffData {
   readonly id: string;
   readonly displayName: string;
-  readonly role: string;
+  readonly role: StaffRole;
   readonly isSchoolSub: boolean;
 }
 
-export type StaffRole = 'Teacher' | 'Administrator' | 'Staff';
+export type { StaffRole } from '@/domain/staff';
 
 export interface ManagedStaffData {
   readonly id: string;
@@ -93,7 +95,13 @@ export interface PlanAssignment {
   readonly absentStaff: StaffData;
   readonly assignedStaff: StaffData | null;
   readonly resolutionSource:
-    'School Sub' | 'PLAN' | 'Admin' | 'Manual' | 'Override' | null;
+    | 'School Sub'
+    | 'PLAN'
+    | 'Admin'
+    | 'Available'
+    | 'Manual'
+    | 'Override'
+    | null;
   readonly resolutionType: string | null;
   readonly resolutionDetails: unknown;
   readonly status: 'unresolved' | 'assigned' | 'intentionally_uncovered';
@@ -174,15 +182,20 @@ export interface PlanDetail {
 export interface CandidatePreview {
   readonly id: string;
   readonly displayName: string;
-  readonly role: string;
+  readonly role: StaffRole;
   readonly isSchoolSub: boolean;
-  readonly availability: 'default' | 'school_sub' | 'plan' | 'admin' | 'manual';
+  readonly isDefaultCandidate: boolean;
+  readonly availability:
+    'default' | 'school_sub' | 'plan' | 'admin' | 'open' | 'manual';
   readonly availabilitySource: string;
   readonly conflicts: readonly string[];
   readonly warnings: readonly string[];
-  readonly currentBurden: number;
-  readonly proposedBurden: number;
-  readonly projectedBurden: number;
+  readonly currentBurden: number | null;
+  readonly proposedBurden: number | null;
+  readonly projectedBurden: number | null;
+  readonly standardPeriodMinutes: number | null;
+  readonly standardPeriodSource: 'configured' | 'auto' | null;
+  readonly workloadKnown: boolean;
   readonly threshold: number;
   readonly windowDays: number;
 }

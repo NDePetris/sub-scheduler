@@ -498,7 +498,7 @@ function StaffEditor({
         </Field>
         <Field
           label="Standard Period"
-          help="Used to calculate Plan Periods Lost when this staff member gives up PLAN time to cover another class."
+          help="Used to calculate Plan Periods Lost when this staff member gives up plan time to cover another class."
         >
           <select
             className="field"
@@ -527,23 +527,34 @@ function StaffEditor({
           <Toggle
             checked={form.canSub}
             onChange={changeCanSub}
-            label="Can be assigned as a Sub"
+            label="Eligible for Sub Assignments"
+            help="Include this person as a possible sub when they are available."
           />
           <Toggle
             checked={form.isSchoolSub}
             onChange={changeSchoolSub}
-            label="School Sub"
-            help="School Sub automatically enables Can Sub and receives School Sub ranking priority."
+            label="Designated School Sub"
+            help="Prioritize this person as a School Sub. School Subs do not need available plan or Admin time to be recommended."
           />
         </div>
 
         {current && (
           <div className="border-border border-t pt-5">
-            <h3 className="font-semibold">Imported Schedule Names</h3>
+            <h3 className="font-semibold">Schedule Name Matching</h3>
             <p className="text-muted-foreground mt-1 text-xs">
-              Alternate names match future imports only. Historical schedules
-              remain unchanged.
+              Alternate names that may appear for this person in uploaded
+              schedules. Names you map during schedule import are remembered
+              here for future uploads.
             </p>
+            <div className="mt-3 text-sm">
+              <p className="text-muted-foreground text-xs font-semibold">
+                Primary name
+              </p>
+              <p className="mt-0.5 font-semibold">{current.displayName}</p>
+              <p className="text-muted-foreground mt-3 text-xs font-semibold">
+                Also recognize
+              </p>
+            </div>
             <div className="mt-3 space-y-2">
               {current.aliases.map((item) => (
                 <div
@@ -568,6 +579,10 @@ function StaffEditor({
                 </p>
               )}
             </div>
+            <p className="text-muted-foreground mt-3 text-xs">
+              Changing or removing aliases affects future schedule matching and
+              does not rewrite activated historical schedules.
+            </p>
             <div className="mt-3 flex gap-2">
               <input
                 className="field"

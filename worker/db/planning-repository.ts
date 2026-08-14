@@ -12,6 +12,8 @@ import {
   type CandidateAvailability,
   type SplitSegmentInput,
 } from '../../src/domain/planning';
+import { isSchoolDay } from '../../src/domain/calendar';
+import { normalizeStaffRole } from '../../src/domain/staff';
 import { HttpError } from '../http';
 
 type DayType = 'A' | 'B';
@@ -166,7 +168,8 @@ interface CountRow {
 }
 
 interface CandidateCheck {
-  readonly source: 'School Sub' | 'Plan Period' | 'Admin' | 'Manual';
+  readonly source:
+    'School Sub' | 'Plan Period' | 'Admin' | 'Available' | 'Manual';
   readonly sourceType: Exclude<CandidateAvailability, 'default'>;
   readonly conflicts: readonly string[];
   readonly warnings: readonly string[];
@@ -177,13 +180,17 @@ interface CandidatePreview {
   readonly displayName: string;
   readonly role: string;
   readonly isSchoolSub: boolean;
+  readonly isDefaultCandidate: boolean;
   readonly availability: CandidateAvailability;
   readonly availabilitySource: string;
   readonly conflicts: readonly string[];
   readonly warnings: readonly string[];
-  readonly currentBurden: number;
-  readonly proposedBurden: number;
-  readonly projectedBurden: number;
+  readonly currentBurden: number | null;
+  readonly proposedBurden: number | null;
+  readonly projectedBurden: number | null;
+  readonly standardPeriodMinutes: number | null;
+  readonly standardPeriodSource: 'configured' | 'auto' | null;
+  readonly workloadKnown: boolean;
   readonly threshold: number;
   readonly windowDays: number;
 }
@@ -203,6 +210,13 @@ export class PlanningRepository {
     requestedDayType: DayType | undefined,
     actorId: string,
   ) {
+    if (!isSchoolDay(date)) {
+      throw new HttpError(
+        400,
+        'weekend_plan_not_allowed',
+        'Daily Sub Plans require a weekday.',
+      );
+    }
     const existing = await this.findPlan(date);
     if (existing) {
       if (requestedDayType && requestedDayType !== existing.day_type) {
@@ -653,7 +667,9 @@ export class PlanningRepository {
       );
       const currentBurden = person.is_school_sub
         ? 0
-        : (burdens.get(person.id) ?? 0);
+        : burdens.has(person.id)
+          ? (burdens.get(person.id) ?? null)
+          : 0;
       const planBlocks = entries
         .filter(
           (entry) =>
@@ -679,7 +695,6 @@ export class PlanningRepository {
         dayType: plan.day_type,
         normalEntries,
         applicableEntries,
-        fallbackPlanBlocks: planBlocks,
       });
       const proposedBurden = person.is_school_sub
         ? 0
@@ -699,18 +714,27 @@ export class PlanningRepository {
       );
       const isValidDefault =
         assignment.default_staff_id === person.id &&
+        check.sourceType !== 'manual' &&
         check.conflicts.length === 0;
+      const isDefaultCandidate = assignment.default_staff_id === person.id;
+      const workloadUnknown = currentBurden === null || proposedBurden === null;
       return {
         id: person.id,
         displayName: person.display_name,
-        role: person.role,
+        role: normalizeStaffRole(person.role),
         isSchoolSub: person.is_school_sub === 1,
+        isDefaultCandidate,
+        workloadKnown: !workloadUnknown,
         availability: isValidDefault ? 'default' : check.sourceType,
         availabilitySource: check.source,
         conflicts: check.conflicts,
         warnings: [
           ...check.warnings,
-          ...(projectedBurden >= settings.workload_warning_threshold
+          ...(workloadUnknown
+            ? ['Plan-time calculation needs staff configuration.']
+            : []),
+          ...(projectedBurden !== null &&
+          projectedBurden >= settings.workload_warning_threshold
             ? [
                 `Projected workload ${projectedBurden.toFixed(2)} reaches the ${settings.workload_warning_threshold.toFixed(2)} threshold.`,
               ]
@@ -719,6 +743,12 @@ export class PlanningRepository {
         currentBurden,
         proposedBurden,
         projectedBurden,
+        standardPeriodMinutes,
+        standardPeriodSource: standardPeriodMinutes
+          ? person.standard_period_minutes
+            ? 'configured'
+            : 'auto'
+          : null,
         threshold: settings.workload_warning_threshold,
         windowDays: settings.workload_window_days,
       };
@@ -1175,7 +1205,7 @@ export class PlanningRepository {
     if (check.conflicts.length > 0 || check.sourceType === 'manual') {
       const reason =
         check.conflicts[0] ??
-        `${person.display_name} has no PLAN/Admin availability.`;
+        `${person.display_name} is not automatically available for this Assignment.`;
       return unresolvedDefault(reason);
     }
     return {
@@ -1222,7 +1252,7 @@ export class PlanningRepository {
     date: string,
     windowDays: number,
     excludeAssignmentId: string,
-  ): Promise<Map<string, number>> {
+  ): Promise<Map<string, number | null>> {
     const startDate = shiftSchoolDate(date, -(windowDays - 1));
     const coverage = await this.db
       .prepare(
@@ -1281,7 +1311,7 @@ export class PlanningRepository {
       entriesByCandidateAndSource.set(key, list);
     }
 
-    const burdens = new Map<string, number>();
+    const burdens = new Map<string, number | null>();
     for (const item of coverage.results) {
       if (item.is_school_sub === 1) continue;
       const sourceType = item.special_schedule_id ? 'special' : 'normal';
@@ -1307,16 +1337,18 @@ export class PlanningRepository {
         normalEntries:
           sourceType === 'normal' ? sourceEntries.map(periodEntryDto) : [],
         applicableEntries: sourceEntries.map(periodEntryDto),
-        fallbackPlanBlocks: blocks,
       });
       const burden = calculatePlanPeriodsLost(
         blocks,
         [{ startTime: item.start_time, endTime: item.end_time }],
         standardPeriodMinutes,
       );
+      const existing = burdens.has(item.staff_id)
+        ? (burdens.get(item.staff_id) ?? null)
+        : 0;
       burdens.set(
         item.staff_id,
-        round((burdens.get(item.staff_id) ?? 0) + burden),
+        existing === null || burden === null ? null : round(existing + burden),
       );
     }
     return burdens;
@@ -1372,6 +1404,13 @@ export class PlanningRepository {
     plan: PlanRow;
     insert: D1PreparedStatement | null;
   }> {
+    if (!isSchoolDay(date)) {
+      throw new HttpError(
+        400,
+        'weekend_plan_not_allowed',
+        'Daily Sub Plans require a weekday.',
+      );
+    }
     const existing = await this.findPlan(date);
     if (existing) return { plan: existing, insert: null };
     const resolved = await this.resolveSchedule(date);
@@ -1725,27 +1764,21 @@ function evaluateCandidate(
     }
   }
 
-  const entries = context.entries.filter(
+  const applicableEntries = context.entries.filter(
     (entry) =>
       entry.staff_id === staff.id &&
-      (entry.day_type === 'ALL' || entry.day_type === plan.day_type) &&
-      entry.start_time < endTime &&
-      startTime < entry.end_time,
+      (entry.day_type === 'ALL' || entry.day_type === plan.day_type),
+  );
+  const entries = applicableEntries.filter(
+    (entry) => entry.start_time < endTime && startTime < entry.end_time,
   );
   if (staff.is_school_sub === 1) {
-    const configuredAvailability = coversInterval(
-      entries.filter((entry) => entry.activity_type === 'other'),
-      startTime,
-      endTime,
-    );
-    return configuredAvailability
-      ? {
-          source: 'School Sub',
-          sourceType: 'school_sub',
-          conflicts,
-          warnings,
-        }
-      : { source: 'Manual', sourceType: 'manual', conflicts, warnings };
+    return {
+      source: 'School Sub',
+      sourceType: 'school_sub',
+      conflicts,
+      warnings,
+    };
   }
 
   for (const entry of entries.filter(
@@ -1774,6 +1807,9 @@ function evaluateCandidate(
   ) {
     return { source: 'Admin', sourceType: 'admin', conflicts, warnings };
   }
+  if (applicableEntries.length > 0 && entries.length === 0) {
+    return { source: 'Available', sourceType: 'open', conflicts, warnings };
+  }
   return { source: 'Manual', sourceType: 'manual', conflicts, warnings };
 }
 
@@ -1781,14 +1817,18 @@ function resolutionSource(
   assignment: AssignmentRow,
   schedule: readonly EntryRow[],
   dayType: DayType,
-): 'School Sub' | 'PLAN' | 'Admin' | 'Manual' | 'Override' | null {
+):
+  'School Sub' | 'PLAN' | 'Admin' | 'Available' | 'Manual' | 'Override' | null {
   if (!assignment.assigned_staff_id) return null;
   if (assignment.resolution_type === 'manual_override') return 'Override';
   if (assignment.assigned_is_school_sub === 1) return 'School Sub';
-  const entries = schedule.filter(
+  const applicableEntries = schedule.filter(
     (entry) =>
       entry.staff_id === assignment.assigned_staff_id &&
-      (entry.day_type === 'ALL' || entry.day_type === dayType) &&
+      (entry.day_type === 'ALL' || entry.day_type === dayType),
+  );
+  const entries = applicableEntries.filter(
+    (entry) =>
       entry.start_time < assignment.end_time &&
       assignment.start_time < entry.end_time,
   );
@@ -1808,6 +1848,7 @@ function resolutionSource(
     )
   )
     return 'Admin';
+  if (applicableEntries.length > 0 && entries.length === 0) return 'Available';
   return 'Manual';
 }
 

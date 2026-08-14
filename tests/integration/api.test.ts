@@ -54,9 +54,9 @@ describe('Worker and D1 smoke path', () => {
         summary: {
           activeStaff: 7,
           activeRooms: 6,
-          activeSchedule: { name: 'Fictional Fall Schedule', entryCount: 28 },
+          activeSchedule: { name: 'Fictional Fall Schedule', entryCount: 27 },
           schoolSubs: [{ displayName: 'Riley Quinn', isSchoolSub: true }],
-          dayTypeCounts: { A: 12, B: 11, shared: 5 },
+          dayTypeCounts: { A: 12, B: 11, shared: 4 },
         },
       },
     });

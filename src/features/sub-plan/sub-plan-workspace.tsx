@@ -11,7 +11,8 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { shiftSchoolDate } from '@/domain/planning';
+import { normalizeToSchoolDay, shiftSchoolDay } from '@/domain/calendar';
+import { isTeacherRole } from '@/domain/staff';
 import { ResolveSubNeedDrawer } from '@/features/sub-plan/resolve-sub-need-drawer';
 import { formatRoomLabel } from '@/features/sub-plan/sub-plan-presentation';
 import { Badge } from '@/components/ui/badge';
@@ -40,7 +41,7 @@ type NeedFilter = 'all' | 'classes' | 'duties' | 'unresolved';
 
 export function SubPlanWorkspace({ bootstrap }: Props) {
   const [date, setDate] = useState(() =>
-    schoolToday(bootstrap.school.timezone),
+    normalizeToSchoolDay(schoolToday(bootstrap.school.timezone)),
   );
   const [detail, setDetail] = useState<PlanDetail | null>(null);
   const [staff, setStaff] = useState<StaffData[]>([]);
@@ -117,7 +118,7 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
 
   function moveDate(days: number) {
     setSelectedAssignmentId(null);
-    setDate(shiftSchoolDate(date, days));
+    setDate(shiftSchoolDay(date, days));
   }
 
   return (
@@ -157,7 +158,11 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
             id="plan-date"
             type="date"
             value={date}
-            onChange={(event) => setDate(event.target.value)}
+            onChange={(event) => {
+              if (event.target.value) {
+                setDate(normalizeToSchoolDay(event.target.value));
+              }
+            }}
             className="border-border h-9 rounded-md border bg-white px-3 text-sm font-semibold"
           />
           <Button
@@ -170,7 +175,11 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
           </Button>
           <Button
             variant="ghost"
-            onClick={() => setDate(schoolToday(bootstrap.school.timezone))}
+            onClick={() =>
+              setDate(
+                normalizeToSchoolDay(schoolToday(bootstrap.school.timezone)),
+              )
+            }
           >
             Today
           </Button>
@@ -334,7 +343,7 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
       {showAbsence && detail && (
         <AbsenceDialog
           date={date}
-          staff={staff.filter((person) => person.role === 'teacher')}
+          staff={staff.filter((person) => isTeacherRole(person.role))}
           onClose={() => setShowAbsence(false)}
           onSaved={async () => {
             setShowAbsence(false);
@@ -390,8 +399,8 @@ function AssignmentTable({
           <th className="w-32 px-4 py-2.5">Time</th>
           <th className="w-44 px-3 py-2.5">Absent Teacher</th>
           <th className="w-28 px-3 py-2.5">Type</th>
-          <th className="px-3 py-2.5">Class / Responsibility</th>
-          <th className="w-48 px-3 py-2.5">Assigned</th>
+          <th className="w-[22rem] px-3 py-2.5">Class / Responsibility</th>
+          <th className="w-72 px-3 py-2.5">Assigned</th>
           <th className="w-36 px-3 py-2.5">Status</th>
         </tr>
       </thead>
@@ -417,7 +426,9 @@ function AssignmentTable({
             <td className="px-3 py-3 capitalize">
               {assignment.responsibilityType.replace('_', ' ')}
             </td>
-            <td className="truncate px-3 py-3">{assignment.description}</td>
+            <td className="truncate px-3 py-3" title={assignment.description}>
+              {assignment.description}
+            </td>
             <td className="px-3 py-3">
               <AssignedCell assignment={assignment} />
             </td>
@@ -443,19 +454,35 @@ function AbsenceDialog({
   readonly onSaved: () => Promise<void>;
 }) {
   const [mode, setMode] = useState<AbsenceMode>('specific');
-  const [staffName, setStaffName] = useState('');
+  const [teacherQuery, setTeacherQuery] = useState('');
+  const [selectedStaffId, setSelectedStaffId] = useState('');
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [activeOption, setActiveOption] = useState(0);
   const [startDate, setStartDate] = useState(date);
   const [endDate, setEndDate] = useState(date);
   const [startTime, setStartTime] = useState('10:00');
   const [endTime, setEndTime] = useState('13:30');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const matchingStaff = useMemo(() => {
+    const query = teacherQuery.trim().toLocaleLowerCase('en-US');
+    return staff.filter(
+      (person) =>
+        !query || person.displayName.toLocaleLowerCase('en-US').includes(query),
+    );
+  }, [staff, teacherQuery]);
+
+  function chooseTeacher(person: StaffData) {
+    setSelectedStaffId(person.id);
+    setTeacherQuery(person.displayName);
+    setOptionsOpen(false);
+    setActiveOption(0);
+    setError(null);
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    const person = staff.find(
-      (candidate) => candidate.displayName === staffName,
-    );
+    const person = staff.find((candidate) => candidate.id === selectedStaffId);
     if (!person) {
       setError('Choose an active teacher from the list.');
       return;
@@ -483,19 +510,86 @@ function AbsenceDialog({
       <form onSubmit={(event) => void submit(event)} className="space-y-4">
         {error && <ErrorBanner message={error} />}
         <Labeled label="Absent Teacher">
-          <input
-            list="teacher-options"
-            value={staffName}
-            onChange={(event) => setStaffName(event.target.value)}
-            placeholder="Search active teachers"
-            className="field"
-            required
-          />
-          <datalist id="teacher-options">
-            {staff.map((person) => (
-              <option key={person.id} value={person.displayName} />
-            ))}
-          </datalist>
+          <div className="relative">
+            <input
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={optionsOpen}
+              aria-controls="teacher-options"
+              aria-activedescendant={
+                optionsOpen && matchingStaff[activeOption]
+                  ? `teacher-option-${matchingStaff[activeOption].id}`
+                  : undefined
+              }
+              value={teacherQuery}
+              onFocus={() => setOptionsOpen(true)}
+              onChange={(event) => {
+                setTeacherQuery(event.target.value);
+                setSelectedStaffId('');
+                setOptionsOpen(true);
+                setActiveOption(0);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault();
+                  setOptionsOpen(true);
+                  setActiveOption((value) =>
+                    Math.max(0, Math.min(value + 1, matchingStaff.length - 1)),
+                  );
+                } else if (event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  setActiveOption((value) => Math.max(value - 1, 0));
+                } else if (
+                  event.key === 'Enter' &&
+                  optionsOpen &&
+                  matchingStaff[activeOption]
+                ) {
+                  event.preventDefault();
+                  chooseTeacher(matchingStaff[activeOption]);
+                } else if (event.key === 'Escape') {
+                  setOptionsOpen(false);
+                }
+              }}
+              onBlur={() => window.setTimeout(() => setOptionsOpen(false), 0)}
+              placeholder="Search active teachers"
+              className="field"
+              required
+            />
+            {optionsOpen && (
+              <div
+                id="teacher-options"
+                role="listbox"
+                className="border-border absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-md border bg-white py-1 shadow-lg"
+              >
+                {matchingStaff.length > 0 ? (
+                  matchingStaff.map((person, index) => (
+                    <button
+                      id={`teacher-option-${person.id}`}
+                      key={person.id}
+                      type="button"
+                      role="option"
+                      aria-selected={person.id === selectedStaffId}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseEnter={() => setActiveOption(index)}
+                      onClick={() => chooseTeacher(person)}
+                      className={cn(
+                        'block w-full px-3 py-2 text-left text-sm',
+                        index === activeOption
+                          ? 'bg-brand-soft text-brand-dark'
+                          : 'hover:bg-muted',
+                      )}
+                    >
+                      {person.displayName}
+                    </button>
+                  ))
+                ) : (
+                  <p className="text-muted-foreground px-3 py-2 text-sm">
+                    No active teachers match.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </Labeled>
         <fieldset>
           <legend className="mb-2 text-sm font-semibold">
@@ -933,7 +1027,11 @@ function AssignedCell({ assignment }: { readonly assignment: PlanAssignment }) {
   }
   return (
     <div>
-      <div className="truncate">{assignmentLabel(assignment)}</div>
+      <div
+        className={cn('truncate', assignment.assignedStaff && 'font-semibold')}
+      >
+        {assignmentLabel(assignment)}
+      </div>
       {(assignment.resolutionSource || assignment.isDefault) && (
         <div className="mt-1 flex flex-wrap gap-1">
           {assignment.resolutionSource && (

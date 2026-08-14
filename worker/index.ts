@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
-import { parseLocalTime, parseSchoolDate } from '../src/domain/calendar';
+import {
+  isSchoolDay,
+  parseLocalTime,
+  parseSchoolDate,
+} from '../src/domain/calendar';
+import { STAFF_ROLES } from '../src/domain/staff';
 import {
   readWorkbook,
   assertXlsxFileName,
@@ -24,7 +29,7 @@ const timeSchema = z
 const dayTypeSchema = z.enum(['A', 'B']);
 
 const ensurePlanSchema = z.object({
-  date: dateSchema,
+  date: dateSchema.refine(isSchoolDay, 'Daily Sub Plans require a weekday.'),
   dayType: dayTypeSchema.optional(),
 });
 const absenceSchema = z
@@ -139,7 +144,7 @@ const resolveSchema = z.object({
 });
 const messageEditSchema = z.object({ editedText: z.string().max(100_000) });
 const statusSchema = z.object({ status: z.enum(['draft', 'finalized']) });
-const staffRoleSchema = z.enum(['Teacher', 'Administrator', 'Staff']);
+const staffRoleSchema = z.enum(STAFF_ROLES);
 const standardPeriodSchema = z.union([z.literal(40), z.literal(50), z.null()]);
 const staffCreateSchema = z.object({
   displayName: z.string().trim().min(1).max(120),

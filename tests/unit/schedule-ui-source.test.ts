@@ -17,6 +17,60 @@ describe('Schedule UI source hygiene', () => {
   });
 });
 
+describe('Add Absence staff selection source', () => {
+  const source = readFileSync(
+    'src/features/sub-plan/sub-plan-workspace.tsx',
+    'utf8',
+  );
+
+  it('uses normalized Teacher filtering and an ID-backed accessible combobox', () => {
+    expect(source).toContain('isTeacherRole(person.role)');
+    expect(source).toContain('role="combobox"');
+    expect(source).toContain('role="listbox"');
+    expect(source).toContain('selectedStaffId');
+    expect(source).toContain("setSelectedStaffId('')");
+    expect(source).toContain('staffId: person.id');
+    expect(source).not.toContain('<datalist');
+    expect(source).not.toContain("person.role === 'teacher'");
+  });
+});
+
+describe('Staff editor terminology source', () => {
+  const source = readFileSync(
+    'src/features/staff-rooms/staff-rooms-workspace.tsx',
+    'utf8',
+  );
+
+  it('uses eligibility, designated School Sub, and schedule matching copy', () => {
+    expect(source).toContain('Eligible for Sub Assignments');
+    expect(source).toContain('Designated School Sub');
+    expect(source).toContain('Schedule Name Matching');
+    expect(source).toContain('Primary name');
+    expect(source).toContain('Also recognize');
+    expect(source).not.toContain('Can be assigned as a Sub');
+  });
+});
+
+describe('Daily Sub Plan resolution presentation source', () => {
+  const workspace = readFileSync(
+    'src/features/sub-plan/sub-plan-workspace.tsx',
+    'utf8',
+  );
+  const drawer = readFileSync(
+    'src/features/sub-plan/resolve-sub-need-drawer.tsx',
+    'utf8',
+  );
+
+  it('shows concise availability badges and contextual current/default state', () => {
+    expect(drawer).toContain('Currently Chosen');
+    expect(drawer).not.toContain('Not automatically available');
+    expect(drawer).not.toContain('Default Sub Plan\n');
+    expect(drawer).toContain("candidate.availability === 'open'");
+    expect(drawer).toContain('candidate.isDefaultCandidate');
+    expect(workspace).toContain("assignment.assignedStaff && 'font-semibold'");
+  });
+});
+
 describe('Schedule import staged workflow source', () => {
   const source = readFileSync(
     'src/features/schedule-import/schedule-import-workspace.tsx',

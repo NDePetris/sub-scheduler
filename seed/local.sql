@@ -81,8 +81,7 @@ INSERT INTO schedule_entries (
   ('entry_theo_b_1120', 'schedule_2026_fall', 'staff_theo_wallace', 'B', '11:20', '12:10', 'instruction', 'HS', 'High School Laboratory', 'room_hs_lab', 1),
 
   ('entry_casey_all_0800', 'schedule_2026_fall', 'staff_casey_brooks', 'ALL', '08:00', '10:30', 'admin', 'PLAN_ADMIN', 'Admin', NULL, 0),
-  ('entry_casey_all_1030', 'schedule_2026_fall', 'staff_casey_brooks', 'ALL', '10:30', '11:20', 'other', 'AFTER_SCHOOL_OTHER', 'Operations Meeting', NULL, 0),
-  ('entry_school_sub_all', 'schedule_2026_fall', 'staff_riley_quinn', 'ALL', '08:00', '15:30', 'other', 'AFTER_SCHOOL_OTHER', 'School Sub Available', NULL, 0)
+  ('entry_casey_all_1030', 'schedule_2026_fall', 'staff_casey_brooks', 'ALL', '10:30', '11:20', 'other', 'AFTER_SCHOOL_OTHER', 'Operations Meeting', NULL, 0)
 ON CONFLICT(id) DO UPDATE SET
   schedule_version_id = excluded.schedule_version_id,
   staff_id = excluded.staff_id,

@@ -343,7 +343,7 @@ Use a dedicated flag such as:
 
 `is_school_sub`
 
-to identify staff members who should appear as School Subs in the planning interface. Zero, one, or multiple active School Subs are permitted. School Sub implies Can Sub; disabling Can Sub clears School Sub.
+to identify staff members who should appear as School Subs in the planning interface. Zero, one, or multiple active School Subs are permitted. School Sub implies Can Sub; disabling Can Sub clears School Sub. The designation itself makes an active School Sub automatically available unless that person is absent or already providing overlapping sub coverage; no schedule presence or availability block is required.
 
 School Subs remain normal staff records rather than hard-coded system users.
 
@@ -439,7 +439,7 @@ If a saved absence has no applicable scheduled responsibility requiring a Sub fo
 
 ## 13. Daily Sub Plan
 
-A **Daily Sub Plan** exists for a specific date.
+A **Daily Sub Plan** exists for a specific school date. For MVP, school days are Monday through Friday. Previous/next navigation, date-range absence expansion, A/B rotation, and plan creation share this definition; weekends do not receive ordinary Daily Sub Plans or advance A/B rotation. A future school calendar may extend this layer with holidays and other no-school dates.
 
 It stores:
 
@@ -720,6 +720,7 @@ For each candidate show:
 - availability source:
   - Plan Period
   - Admin
+  - Available open schedule time
   - School Sub
 - Plan Periods Lost Today;
 - Plan Periods Lost in rolling 7-day window;
@@ -732,9 +733,8 @@ Recommended ordering:
 
 1. valid Default Sub Plan assignment;
 2. available School Sub;
-3. staff available during PLAN periods;
-4. staff available during Admin periods;
-5. other manually selectable staff.
+3. staff automatically available during PLAN, Admin, or open schedule time, as one shared priority tier;
+4. other manually selectable staff.
 
 Within comparable groups, favor people with lower recent subbing burden.
 
@@ -767,11 +767,11 @@ This information must be prominent whenever an alternate sub is selected.
 
 Use **Plan Period Equivalents**, not number of Assignments.
 
-For every teacher whose PLAN time is affected by subbing:
+For every teacher whose plan time is affected by subbing:
 
 `plan-period equivalent = coverage minutes overlapping PLAN / staff standard instructional-period minutes`
 
-The staff-level setting is Auto, 40 minutes, or 50 minutes. Auto selects the most common applicable instructional block duration; a frequency tie selects the shorter duration deterministically. PLAN, Admin, lunch, duty, after-school, and other non-instructional blocks do not participate in inference. If no instructional duration exists, calculation may fall back to the shortest relevant PLAN block and the UI reports that no instructional value was detected.
+The staff-level setting is Auto, 40 minutes, or 50 minutes. Auto considers only applicable 40- and 50-minute instructional blocks, selects the most common supported duration, and selects 40 minutes for a frequency tie. Longer merged instructional blocks and PLAN, Admin, lunch, duty, after-school, and other non-instructional blocks do not participate. If neither supported duration can be inferred, the calculation remains unknown, the administrator may still assign the person, and the UI directs them to configure the staff member rather than silently using a merged PLAN block.
 
 Calculate overlap separately across affected PLAN blocks and Assignment segments, using the same standard-period denominator throughout. A merged 80-minute PLAN block therefore counts as 2.00 equivalents for a teacher with a 40-minute standard period.
 
@@ -799,7 +799,7 @@ Admin blocks make a person **available** for subbing.
 
 They do not automatically count as teacher Plan Periods Lost.
 
-The fairness metric is based on scheduled PLAN time sacrificed.
+The fairness metric is based on scheduled plan time sacrificed.
 
 ### 19.3 Rolling Warning
 
@@ -937,7 +937,7 @@ The School Sub:
 
 - appears prominently in candidate lists;
 - can be assigned like another staff member;
-- is treated as available according to configured availability;
+- is treated as available by designation without requiring schedule data;
 - does not accumulate teacher Plan Periods Lost.
 
 The School Sub should not be implemented as hard-coded application logic.
@@ -949,6 +949,7 @@ The School Sub should not be implemented as hard-coded application logic.
 Activities such as:
 
 - lunch duty;
+- a standalone Break responsibility;
 - after-school duty;
 - other defined responsibilities;
 

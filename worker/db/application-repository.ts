@@ -1,5 +1,6 @@
 import { normalizeIdentityValue } from '../../src/domain/identity';
 import { inferStandardPeriodMinutes } from '../../src/domain/planning';
+import { normalizeStaffRole, type StaffRole } from '../../src/domain/staff';
 import { HttpError } from '../http';
 
 interface SettingsRow {
@@ -55,8 +56,6 @@ interface RoomRow {
   name: string;
   is_active: number;
 }
-
-export type StaffRole = 'Teacher' | 'Administrator' | 'Staff';
 
 export interface StaffSummary {
   readonly id: string;
@@ -543,9 +542,7 @@ function roomDto(row: RoomRow) {
 }
 
 function roleFromStorage(role: string): StaffRole {
-  if (role.trim().toLowerCase() === 'teacher') return 'Teacher';
-  if (role.trim().toLowerCase() === 'administrator') return 'Administrator';
-  return 'Staff';
+  return normalizeStaffRole(role);
 }
 
 function roleToStorage(role: StaffRole): string {
