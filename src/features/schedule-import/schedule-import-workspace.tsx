@@ -4,6 +4,7 @@ import {
   Check,
   FileSpreadsheet,
   Link2,
+  Plus,
   Settings2,
   Trash2,
   Upload,
@@ -15,10 +16,15 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   activateScheduleImport,
+  activateSpecialScheduleImport,
   archiveSchedule,
+  archiveSpecialSchedule,
+  configureScheduleImport,
   configureSchedule,
+  configureSpecialSchedule,
   deleteSchedule,
   deleteScheduleImport,
+  deleteSpecialSchedule,
   getScheduleManagement,
   listRooms,
   listScheduleImports,
@@ -31,8 +37,16 @@ import {
   type ScheduleImportDetail,
   type ScheduleManagementData,
   type ScheduleVersionSummary,
+  type SpecialScheduleSummary,
   type StaffData,
 } from '@/lib/api';
+
+interface Confirmation {
+  readonly title: string;
+  readonly body: string;
+  readonly confirmLabel: string;
+  readonly action: () => Promise<void>;
+}
 
 export function ScheduleImportWorkspace() {
   const [management, setManagement] = useState<ScheduleManagementData | null>(
@@ -43,16 +57,22 @@ export function ScheduleImportWorkspace() {
   const [staff, setStaff] = useState<StaffData[]>([]);
   const [rooms, setRooms] = useState<RoomData[]>([]);
   const [showImport, setShowImport] = useState(false);
+  const [showSpecialImport, setShowSpecialImport] = useState(false);
   const [configure, setConfigure] = useState<ScheduleVersionSummary | null>(
     null,
   );
+  const [configureSpecial, setConfigureSpecial] =
+    useState<SpecialScheduleSummary | null>(null);
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [activationPreview, setActivationPreview] =
     useState<ActivationPreview | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const [effectiveFrom, setEffectiveFrom] = useState('2026-08-17');
+  const [effectiveFrom, setEffectiveFrom] = useState('');
   const [effectiveTo, setEffectiveTo] = useState('');
   const [scheduleName, setScheduleName] = useState('Imported School Schedule');
+  const [specialDate, setSpecialDate] = useState('');
+  const [specialName, setSpecialName] = useState('');
   const [targets, setTargets] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -72,6 +92,7 @@ export function ScheduleImportWorkspace() {
           listRooms(),
         ]);
       setManagement(scheduleData);
+      setEffectiveFrom((value) => value || scheduleData.schoolDate);
       setImports(importValues);
       setStaff(staffValues);
       setRooms(roomValues);
@@ -85,7 +106,7 @@ export function ScheduleImportWorkspace() {
     if (fileInput.current) fileInput.current.value = '';
   }
 
-  async function upload(event: React.FormEvent) {
+  async function upload(event: React.FormEvent, kind: 'normal' | 'special') {
     event.preventDefault();
     if (!file) return setError('Choose an .xlsx workbook.');
     setBusy(true);
@@ -93,15 +114,22 @@ export function ScheduleImportWorkspace() {
     try {
       const result = await uploadScheduleImport({
         file,
-        effectiveFrom,
-        effectiveTo,
+        kind,
+        name: kind === 'normal' ? scheduleName : specialName,
+        effectiveFrom: kind === 'normal' ? effectiveFrom : undefined,
+        effectiveTo: kind === 'normal' ? effectiveTo : undefined,
+        specialDate: kind === 'special' ? specialDate : undefined,
       });
       setSelected(result);
       setImports((values) => [
         result,
         ...values.filter((item) => item.id !== result.id),
       ]);
-      setScheduleName(file.name.replace(/\.xlsx$/i, '') || 'Imported Schedule');
+      setScheduleName(result.name);
+      setSpecialName(result.name);
+      setEffectiveFrom(result.effectiveFrom ?? '');
+      setEffectiveTo(result.effectiveTo ?? '');
+      setSpecialDate(result.specialDate ?? '');
       clearFile();
     } catch (cause) {
       setError(message(cause));
@@ -168,15 +196,93 @@ export function ScheduleImportWorkspace() {
     });
   }
 
-  async function beginActivation() {
+  function confirmCreateAllMissing() {
+    if (!selected) return;
+    const staffCount = selected.unmappedStaff;
+    const roomCount = selected.unmappedRooms;
+    const parts = [
+      ...(staffCount
+        ? [`${staffCount} Staff record${staffCount === 1 ? '' : 's'}`]
+        : []),
+      ...(roomCount
+        ? [`${roomCount} Room record${roomCount === 1 ? '' : 's'}`]
+        : []),
+    ];
+    setConfirmation({
+      title:
+        staffCount && roomCount
+          ? 'Create missing Staff and Rooms?'
+          : staffCount
+            ? 'Create missing Staff?'
+            : 'Create missing Rooms?',
+      body: `This will create ${parts.join(' and ')}. These records remain even if the staged import is later deleted.`,
+      confirmLabel: 'Create All Records',
+      action: createAllMissing,
+    });
+  }
+
+  async function saveStagedConfiguration() {
     if (!selected) return;
     await run(async () => {
+      const result = await configureScheduleImport(
+        selected.id,
+        selected.kind === 'normal'
+          ? {
+              kind: 'normal',
+              name: scheduleName,
+              effectiveFrom,
+              effectiveTo: effectiveTo || null,
+            }
+          : { kind: 'special', name: specialName, date: specialDate },
+      );
+      replaceImport(result);
+    });
+  }
+
+  async function beginActivation() {
+    if (!selected || selected.kind !== 'normal') return;
+    await run(async () => {
+      const configured = await configureScheduleImport(selected.id, {
+        kind: 'normal',
+        name: scheduleName,
+        effectiveFrom,
+        effectiveTo: effectiveTo || null,
+      });
+      replaceImport(configured);
       const preview = await previewScheduleActivation(selected.id);
       if (preview.action === 'close_predecessor') {
         setActivationPreview(preview);
       } else {
         await completeActivation(false);
       }
+    });
+  }
+
+  async function beginSpecialActivation() {
+    if (!selected || selected.kind !== 'special') return;
+    try {
+      const configured = await configureScheduleImport(selected.id, {
+        kind: 'special',
+        name: specialName,
+        date: specialDate,
+      });
+      replaceImport(configured);
+    } catch (cause) {
+      setError(message(cause));
+      return;
+    }
+    setConfirmation({
+      title: 'Activate Special Schedule?',
+      body: `${specialName} will be the schedule used for ${formatDate(specialDate)} only. Normal Schedule Versions will not apply on this date.`,
+      confirmLabel: 'Activate Special Schedule',
+      action: async () => {
+        await run(async () => {
+          await activateSpecialScheduleImport(selected.id);
+          setSelected(null);
+          setShowSpecialImport(false);
+          await loadAll();
+        });
+      },
     });
   }
 
@@ -195,33 +301,60 @@ export function ScheduleImportWorkspace() {
     });
   }
 
-  async function removeImport(item: ScheduleImportDetail) {
-    if (!window.confirm(`Delete staged import ${item.sourceFileName}?`)) return;
-    await run(async () => {
-      await deleteScheduleImport(item.id);
-      setImports((values) => values.filter((value) => value.id !== item.id));
-      if (selected?.id === item.id) setSelected(null);
+  function removeImport(item: ScheduleImportDetail) {
+    setConfirmation({
+      title: 'Delete staged import?',
+      body: `${item.sourceFileName} and its staged entries and mappings will be deleted. Staff and Rooms already created from it will remain.`,
+      confirmLabel: 'Delete Staged Import',
+      action: async () =>
+        run(async () => {
+          await deleteScheduleImport(item.id);
+          setImports((values) =>
+            values.filter((value) => value.id !== item.id),
+          );
+          if (selected?.id === item.id) setSelected(null);
+        }),
     });
   }
 
-  async function removeVersion(item: ScheduleVersionSummary) {
-    if (
-      !window.confirm(
-        `Permanently delete ${item.name}, its ${item.entryCount} Schedule Entries, and related import metadata? Staff and Rooms will not be deleted.`,
-      )
-    )
-      return;
-    await run(async () => setManagement(await deleteSchedule(item.id)));
+  function removeVersion(item: ScheduleVersionSummary) {
+    setConfirmation({
+      title: 'Delete Schedule Version?',
+      body: `Permanently delete ${item.name}, its ${item.entryCount} Schedule Entries, and related import metadata? Staff and Rooms will not be deleted.`,
+      confirmLabel: 'Delete Schedule Version',
+      action: async () =>
+        run(async () => setManagement(await deleteSchedule(item.id))),
+    });
   }
 
-  async function archiveVersion(item: ScheduleVersionSummary) {
-    if (
-      !window.confirm(
-        `${item.name} is referenced by historical Sub Plans. Archive it so it no longer participates in normal schedule resolution while preserving those plans?`,
-      )
-    )
-      return;
-    await run(async () => setManagement(await archiveSchedule(item.id)));
+  function archiveVersion(item: ScheduleVersionSummary) {
+    setConfirmation({
+      title: 'Archive Schedule Version?',
+      body: `${item.name} is referenced by historical Sub Plans. It will stop participating in normal schedule resolution while pinned plans remain available.`,
+      confirmLabel: 'Archive Schedule Version',
+      action: async () =>
+        run(async () => setManagement(await archiveSchedule(item.id))),
+    });
+  }
+
+  function removeSpecial(item: SpecialScheduleSummary) {
+    setConfirmation({
+      title: 'Delete Special Schedule?',
+      body: `Permanently delete ${item.name} and its ${item.entryCount} entries for ${formatDate(item.date)}? Staff and Rooms will not be deleted.`,
+      confirmLabel: 'Delete Special Schedule',
+      action: async () =>
+        run(async () => setManagement(await deleteSpecialSchedule(item.id))),
+    });
+  }
+
+  function archiveSpecial(item: SpecialScheduleSummary) {
+    setConfirmation({
+      title: 'Archive Special Schedule?',
+      body: `${item.name} is referenced by historical Sub Plans. It will stop applying to new plans while pinned plans remain available.`,
+      confirmLabel: 'Archive Special Schedule',
+      action: async () =>
+        run(async () => setManagement(await archiveSpecialSchedule(item.id))),
+    });
   }
 
   function replaceImport(result: ScheduleImportDetail) {
@@ -255,9 +388,6 @@ export function ScheduleImportWorkspace() {
             imports and effective dates safely.
           </p>
         </div>
-        <Button onClick={() => setShowImport((value) => !value)}>
-          <Upload className="size-4" /> Import Schedule
-        </Button>
       </header>
 
       {error && <ErrorBanner message={error} />}
@@ -268,8 +398,7 @@ export function ScheduleImportWorkspace() {
             <div>
               <h2 className="font-bold">Import Schedule</h2>
               <p className="text-muted-foreground text-xs">
-                Receive â†’ Parse â†’ Stage â†’ Validate â†’ Map â†’ Review â†’
-                Activate
+                Receive → Parse → Stage → Validate → Map → Review → Activate
               </p>
             </div>
             <Button
@@ -282,7 +411,7 @@ export function ScheduleImportWorkspace() {
             </Button>
           </div>
           <form
-            onSubmit={(event) => void upload(event)}
+            onSubmit={(event) => void upload(event, 'normal')}
             className="grid grid-cols-[1fr_170px_170px_auto] items-end gap-3 p-5"
           >
             <label className="text-muted-foreground text-xs font-semibold">
@@ -336,33 +465,54 @@ export function ScheduleImportWorkspace() {
               Upload &amp; Validate
             </Button>
           </form>
-          {selected && selected.status !== 'activated' && (
-            <Configuration
-              selected={selected}
-              staff={staff}
-              rooms={rooms}
-              targets={targets}
-              scheduleName={scheduleName}
-              busy={busy}
-              onName={setScheduleName}
-              onTarget={(key, value) =>
-                setTargets((current) => ({ ...current, [key]: value }))
-              }
-              onMap={map}
-              onCreateAll={createAllMissing}
-              onActivate={beginActivation}
-            />
-          )}
+          {selected &&
+            selected.kind === 'normal' &&
+            selected.status !== 'activated' && (
+              <Configuration
+                selected={selected}
+                staff={staff}
+                rooms={rooms}
+                targets={targets}
+                scheduleName={scheduleName}
+                effectiveFrom={effectiveFrom}
+                effectiveTo={effectiveTo}
+                specialName={specialName}
+                specialDate={specialDate}
+                busy={busy}
+                onName={setScheduleName}
+                onEffectiveFrom={setEffectiveFrom}
+                onEffectiveTo={setEffectiveTo}
+                onSpecialName={setSpecialName}
+                onSpecialDate={setSpecialDate}
+                onTarget={(key, value) =>
+                  setTargets((current) => ({ ...current, [key]: value }))
+                }
+                onMap={map}
+                onCreateAll={confirmCreateAllMissing}
+                onSave={saveStagedConfiguration}
+                onActivate={beginActivation}
+              />
+            )}
         </section>
       )}
 
       <section className="border-border overflow-hidden rounded-lg border bg-white">
-        <div className="border-border border-b px-5 py-4">
-          <h2 className="font-bold">Normal Schedule Versions</h2>
-          <p className="text-muted-foreground mt-0.5 text-xs">
-            Status is derived for school date {management?.schoolDate ?? 'â€¦'}.
-            Existing Sub Plans remain pinned when these ranges change.
-          </p>
+        <div className="border-border flex items-center justify-between border-b px-5 py-4">
+          <div>
+            <h2 className="font-bold">Normal Schedule Versions</h2>
+            <p className="text-muted-foreground mt-0.5 text-xs">
+              Status is derived for school date {management?.schoolDate ?? '…'}.
+              Existing Sub Plans remain pinned when these ranges change.
+            </p>
+          </div>
+          <Button
+            onClick={() => {
+              setShowImport((value) => !value);
+              setShowSpecialImport(false);
+            }}
+          >
+            <Upload className="size-4" /> Import Schedule
+          </Button>
         </div>
         <ScheduleTable
           items={management?.scheduleVersions ?? []}
@@ -392,17 +542,23 @@ export function ScheduleImportWorkspace() {
                 <div>
                   <p className="font-semibold">{item.sourceFileName}</p>
                   <p className="text-muted-foreground text-xs">
-                    Imported {formatDateTime(item.createdAt)} Â·{' '}
+                    Imported {formatDateTime(item.createdAt)} ·{' '}
                     {item.entryCount} blocks
                   </p>
                 </div>
                 <span>
-                  {formatDate(item.effectiveFrom)} â†’{' '}
-                  {item.effectiveTo
-                    ? formatDate(item.effectiveTo)
-                    : 'Open-ended'}
+                  {item.kind === 'special'
+                    ? formatDate(item.specialDate ?? '')
+                    : `${formatDate(item.effectiveFrom ?? '')} → ${
+                        item.effectiveTo
+                          ? formatDate(item.effectiveTo)
+                          : 'Open-ended'
+                      }`}
                 </span>
                 <div className="flex gap-2">
+                  <Badge>
+                    {item.kind === 'special' ? 'Special' : 'Normal'}
+                  </Badge>
                   <Badge>{item.status}</Badge>
                   <span className="text-muted-foreground text-xs">
                     {item.unmappedStaff + item.unmappedRooms} mappings
@@ -414,7 +570,13 @@ export function ScheduleImportWorkspace() {
                     variant="secondary"
                     onClick={() => {
                       setSelected(item);
-                      setShowImport(true);
+                      setScheduleName(item.name);
+                      setSpecialName(item.name);
+                      setEffectiveFrom(item.effectiveFrom ?? '');
+                      setEffectiveTo(item.effectiveTo ?? '');
+                      setSpecialDate(item.specialDate ?? '');
+                      setShowImport(item.kind === 'normal');
+                      setShowSpecialImport(item.kind === 'special');
                     }}
                   >
                     Resume Configuration
@@ -434,13 +596,127 @@ export function ScheduleImportWorkspace() {
         )}
       </section>
 
+      {showSpecialImport && (
+        <section className="border-brand/30 overflow-hidden rounded-lg border bg-white shadow-sm">
+          <div className="border-border flex items-center justify-between border-b px-5 py-4">
+            <div>
+              <h2 className="font-bold">Add Special Schedule</h2>
+              <p className="text-muted-foreground text-xs">
+                Receive → Parse → Stage → Validate → Map → Review → Activate
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Close Special Schedule workflow"
+              onClick={() => setShowSpecialImport(false)}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+          <form
+            onSubmit={(event) => void upload(event, 'special')}
+            className="grid grid-cols-[1fr_200px_240px_auto] items-end gap-3 p-5"
+          >
+            <label className="text-muted-foreground text-xs font-semibold">
+              Workbook (.xlsx)
+              <span className="border-border hover:border-brand mt-1 flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed bg-white px-3 text-sm">
+                <FileSpreadsheet className="text-brand-dark size-4" />
+                <span className="text-foreground min-w-0 flex-1 truncate">
+                  {file?.name ?? 'Choose workbook'}
+                </span>
+                {file && (
+                  <button
+                    type="button"
+                    aria-label="Clear selected workbook"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      clearFile();
+                    }}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="size-4" />
+                  </button>
+                )}
+              </span>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                className="sr-only"
+              />
+            </label>
+            <Labeled label="Date">
+              <input
+                type="date"
+                value={specialDate}
+                onChange={(event) => setSpecialDate(event.target.value)}
+                className="field"
+                required
+              />
+            </Labeled>
+            <Labeled label="Special Schedule Name">
+              <input
+                value={specialName}
+                onChange={(event) => setSpecialName(event.target.value)}
+                className="field"
+                placeholder="Early Dismissal"
+                required
+              />
+            </Labeled>
+            <Button type="submit" disabled={busy || !file}>
+              Upload &amp; Validate
+            </Button>
+          </form>
+          {selected &&
+            selected.kind === 'special' &&
+            selected.status !== 'activated' && (
+              <Configuration
+                selected={selected}
+                staff={staff}
+                rooms={rooms}
+                targets={targets}
+                scheduleName={scheduleName}
+                effectiveFrom={effectiveFrom}
+                effectiveTo={effectiveTo}
+                specialName={specialName}
+                specialDate={specialDate}
+                busy={busy}
+                onName={setScheduleName}
+                onEffectiveFrom={setEffectiveFrom}
+                onEffectiveTo={setEffectiveTo}
+                onSpecialName={setSpecialName}
+                onSpecialDate={setSpecialDate}
+                onTarget={(key, value) =>
+                  setTargets((current) => ({ ...current, [key]: value }))
+                }
+                onMap={map}
+                onCreateAll={confirmCreateAllMissing}
+                onSave={saveStagedConfiguration}
+                onActivate={beginSpecialActivation}
+              />
+            )}
+        </section>
+      )}
+
       <section className="border-border overflow-hidden rounded-lg border bg-white">
-        <div className="border-border border-b px-5 py-4">
-          <h2 className="font-bold">Special Schedules</h2>
-          <p className="text-muted-foreground mt-0.5 text-xs">
-            Special Schedules override the normal Schedule Version for one
-            specific date. The normal schedule resumes the next school day.
-          </p>
+        <div className="border-border flex items-center justify-between border-b px-5 py-4">
+          <div>
+            <h2 className="font-bold">Special Schedules</h2>
+            <p className="text-muted-foreground mt-0.5 text-xs">
+              Each Special Schedule is the complete authoritative schedule for
+              one date and is independent of normal schedule availability.
+            </p>
+          </div>
+          <Button
+            onClick={() => {
+              setShowSpecialImport((value) => !value);
+              setShowImport(false);
+            }}
+          >
+            <Plus className="size-4" /> Add Special Schedule
+          </Button>
         </div>
         {!management?.specialSchedules.length ? (
           <Empty>No Special Schedules configured.</Empty>
@@ -452,7 +728,8 @@ export function ScheduleImportWorkspace() {
                 <th className="px-3 py-2.5">Name</th>
                 <th className="px-3 py-2.5">Status</th>
                 <th className="px-3 py-2.5">Source</th>
-                <th className="px-5 py-2.5 text-right">Context</th>
+                <th className="px-3 py-2.5">Usage</th>
+                <th className="px-5 py-2.5 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-border divide-y">
@@ -466,11 +743,40 @@ export function ScheduleImportWorkspace() {
                     <Badge>{item.status}</Badge>
                   </td>
                   <td className="text-muted-foreground px-3 py-3">
-                    {item.sourceFileName ?? 'â€”'}
+                    {item.sourceFileName ?? '—'}
                   </td>
-                  <td className="text-muted-foreground px-5 py-3 text-right text-xs">
-                    {item.entryCount} blocks Â· {item.planReferenceCount} Sub
-                    Plans
+                  <td className="text-muted-foreground px-3 py-3 text-xs">
+                    {item.entryCount} blocks · {item.planReferenceCount} pinned
+                    Sub Plans
+                  </td>
+                  <td className="px-5 py-3">
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setConfigureSpecial(item)}
+                      >
+                        <Settings2 className="size-3.5" /> Configure
+                      </Button>
+                      {item.status !== 'archived' &&
+                        (item.canDelete ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => removeSpecial(item)}
+                          >
+                            <Trash2 className="size-3.5" /> Delete
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => archiveSpecial(item)}
+                          >
+                            <Archive className="size-3.5" /> Archive
+                          </Button>
+                        ))}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -491,6 +797,43 @@ export function ScheduleImportWorkspace() {
             })
           }
         />
+      )}
+
+      {configureSpecial && (
+        <ConfigureSpecialDialog
+          item={configureSpecial}
+          busy={busy}
+          onClose={() => setConfigureSpecial(null)}
+          onSave={(input) =>
+            void run(async () => {
+              setManagement(
+                await configureSpecialSchedule(configureSpecial.id, input),
+              );
+              setConfigureSpecial(null);
+            })
+          }
+        />
+      )}
+
+      {confirmation && (
+        <Modal title={confirmation.title} onClose={() => setConfirmation(null)}>
+          <p className="text-sm leading-6">{confirmation.body}</p>
+          <div className="mt-5 flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setConfirmation(null)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={() => {
+                const action = confirmation.action;
+                setConfirmation(null);
+                void action();
+              }}
+            >
+              {confirmation.confirmLabel}
+            </Button>
+          </div>
+        </Modal>
       )}
 
       {activationPreview?.predecessor && (
@@ -558,19 +901,19 @@ function ScheduleTable({
             <td className="px-5 py-3">
               <p className="font-semibold">{item.name}</p>
               <p className="text-muted-foreground text-xs">
-                {item.entryCount} blocks Â· {item.planReferenceCount} pinned Sub
+                {item.entryCount} blocks · {item.planReferenceCount} pinned Sub
                 Plans
               </p>
             </td>
             <td className="px-3 py-3">{formatDate(item.effectiveFrom)}</td>
             <td className="px-3 py-3">
-              {item.effectiveTo ? formatDate(item.effectiveTo) : 'â€”'}
+              {item.effectiveTo ? formatDate(item.effectiveTo) : '—'}
             </td>
             <td className="px-3 py-3 capitalize">
               <Badge className={statusClass(item.status)}>{item.status}</Badge>
             </td>
             <td className="text-muted-foreground px-3 py-3">
-              {item.sourceFileName ?? 'â€”'}
+              {item.sourceFileName ?? '—'}
             </td>
             <td className="px-5 py-3">
               <div className="flex justify-end gap-2">
@@ -614,11 +957,20 @@ function Configuration({
   rooms,
   targets,
   scheduleName,
+  effectiveFrom,
+  effectiveTo,
+  specialName,
+  specialDate,
   busy,
   onName,
+  onEffectiveFrom,
+  onEffectiveTo,
+  onSpecialName,
+  onSpecialDate,
   onTarget,
   onMap,
   onCreateAll,
+  onSave,
   onActivate,
 }: {
   readonly selected: ScheduleImportDetail;
@@ -626,15 +978,24 @@ function Configuration({
   readonly rooms: readonly RoomData[];
   readonly targets: Readonly<Record<string, string>>;
   readonly scheduleName: string;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string;
+  readonly specialName: string;
+  readonly specialDate: string;
   readonly busy: boolean;
   readonly onName: (value: string) => void;
+  readonly onEffectiveFrom: (value: string) => void;
+  readonly onEffectiveTo: (value: string) => void;
+  readonly onSpecialName: (value: string) => void;
+  readonly onSpecialDate: (value: string) => void;
   readonly onTarget: (key: string, value: string) => void;
   readonly onMap: (
     kind: 'staff' | 'room',
     displayValue: string,
     createNew: boolean,
   ) => Promise<void>;
-  readonly onCreateAll: () => Promise<void>;
+  readonly onCreateAll: () => void;
+  readonly onSave: () => Promise<void>;
   readonly onActivate: () => Promise<void>;
 }) {
   const missing = selected.unmappedStaff + selected.unmappedRooms;
@@ -647,12 +1008,15 @@ function Configuration({
             <Badge>{selected.status}</Badge>
           </div>
           <p className="text-muted-foreground mt-1 text-xs">
-            {selected.sourceFileName} Â· {selected.sheetName} Â·{' '}
-            {selected.entryCount} staged blocks Â·{' '}
-            {formatDate(selected.effectiveFrom)} â†’{' '}
-            {selected.effectiveTo
-              ? formatDate(selected.effectiveTo)
-              : 'Open-ended'}
+            {selected.sourceFileName} · {selected.sheetName} ·{' '}
+            {selected.entryCount} staged blocks ·{' '}
+            {selected.kind === 'special'
+              ? formatDate(selected.specialDate ?? '')
+              : `${formatDate(selected.effectiveFrom ?? '')} → ${
+                  selected.effectiveTo
+                    ? formatDate(selected.effectiveTo)
+                    : 'Open-ended'
+                }`}
           </p>
         </div>
         {missing > 0 && (
@@ -660,7 +1024,7 @@ function Configuration({
             size="sm"
             variant="secondary"
             disabled={busy}
-            onClick={() => void onCreateAll()}
+            onClick={onCreateAll}
           >
             Create All Missing
           </Button>
@@ -747,19 +1111,74 @@ function Configuration({
         </div>
       )}
       <div className="border-border bg-muted/30 flex items-end justify-between gap-4 border-t p-5">
-        <Labeled label="Schedule Version name">
-          <input
-            value={scheduleName}
-            onChange={(event) => onName(event.target.value)}
-            className="field w-80"
-          />
-        </Labeled>
-        <Button
-          disabled={busy || selected.blockingErrors > 0 || missing > 0}
-          onClick={() => void onActivate()}
-        >
-          <Check className="size-4" /> Activate Schedule Version
-        </Button>
+        {selected.kind === 'normal' ? (
+          <div className="grid flex-1 grid-cols-[1fr_170px_170px] gap-3">
+            <Labeled label="Schedule Version name">
+              <input
+                value={scheduleName}
+                onChange={(event) => onName(event.target.value)}
+                className="field"
+                required
+              />
+            </Labeled>
+            <Labeled label="Effective From">
+              <input
+                type="date"
+                value={effectiveFrom}
+                onChange={(event) => onEffectiveFrom(event.target.value)}
+                className="field"
+                required
+              />
+            </Labeled>
+            <Labeled label="Effective To (optional)">
+              <input
+                type="date"
+                min={effectiveFrom}
+                value={effectiveTo}
+                onChange={(event) => onEffectiveTo(event.target.value)}
+                className="field"
+              />
+            </Labeled>
+          </div>
+        ) : (
+          <div className="grid flex-1 grid-cols-[1fr_190px] gap-3">
+            <Labeled label="Special Schedule Name">
+              <input
+                value={specialName}
+                onChange={(event) => onSpecialName(event.target.value)}
+                className="field"
+                required
+              />
+            </Labeled>
+            <Labeled label="Date">
+              <input
+                type="date"
+                value={specialDate}
+                onChange={(event) => onSpecialDate(event.target.value)}
+                className="field"
+                required
+              />
+            </Labeled>
+          </div>
+        )}
+        <div className="flex gap-2">
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={() => void onSave()}
+          >
+            Save Configuration
+          </Button>
+          <Button
+            disabled={busy || selected.blockingErrors > 0 || missing > 0}
+            onClick={() => void onActivate()}
+          >
+            <Check className="size-4" />{' '}
+            {selected.kind === 'normal'
+              ? 'Activate Schedule Version'
+              : 'Activate Special Schedule'}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -825,6 +1244,64 @@ function ConfigureDialog({
             />
           </Labeled>
         </div>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={busy}>
+            Save Configuration
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ConfigureSpecialDialog({
+  item,
+  busy,
+  onClose,
+  onSave,
+}: {
+  readonly item: SpecialScheduleSummary;
+  readonly busy: boolean;
+  readonly onClose: () => void;
+  readonly onSave: (input: { name: string; date: string }) => void;
+}) {
+  const [name, setName] = useState(item.name);
+  const [date, setDate] = useState(item.date);
+  return (
+    <Modal title="Configure Special Schedule" onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave({ name, date });
+        }}
+        className="space-y-4"
+      >
+        <p className="text-muted-foreground text-sm">
+          {item.planReferenceCount > 0
+            ? 'This Special Schedule is pinned by a Sub Plan. Its date is immutable, but its name may be corrected.'
+            : 'An unused Special Schedule may be renamed or moved to an unconfigured date.'}
+        </p>
+        <Labeled label="Special Schedule Name">
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            className="field"
+            required
+          />
+        </Labeled>
+        <Labeled label="Date">
+          <input
+            type="date"
+            value={date}
+            onChange={(event) => setDate(event.target.value)}
+            className="field"
+            disabled={item.planReferenceCount > 0}
+            required
+          />
+        </Labeled>
         <div className="flex justify-end gap-2">
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel

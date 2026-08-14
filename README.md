@@ -57,13 +57,14 @@ Open the URL printed by Vite. The Worker verifies the local server-side identity
 
 ## Exercise the MVP locally
 
-1. Open **Schedule**, review the normal-version timeline and Special Schedules, then choose **Import Schedule** and select `tests/fixtures/schedule-sample.xlsx` with an Effective From date. The styled picker can clear or replace the selected workbook without a refresh.
+1. Open **Schedule**, review the normal-version timeline and Special Schedules, then choose **Import Schedule** and select `tests/fixtures/schedule-sample.xlsx` with an Effective From date. The school-local date is the initial default, and the styled picker can clear or replace the selected workbook without a refresh.
 2. Review the detected worksheet, staff, rooms, A/B columns, staged blocks, warnings, and blocking errors.
-3. Map each imported label to an existing stable record, create records individually, or use **Create All Missing** for the sanitized role-label fixture.
+3. Map each imported label to an existing stable record, create records individually, or use confirmed **Create All Missing** for the sanitized role-label fixture. The staged name and effective dates may be corrected without re-uploading.
 4. Activate the Schedule Version. If the fictional seeded version is still open-ended, review the server-generated confirmation showing its proposed Effective To date, then choose **Activate & End Previous Schedule**. The confirmed operation uses an atomic D1 batch.
 5. Open **Sub Plan**, select a date covered by an active schedule, confirm A/B before recording absences, and use **Add Absence**.
 6. Open an Assignment to review its Default Sub Plan, candidates, availability source, Plan Periods Lost, projected workload, warnings, and override path. Direct, intentional-uncovered, structured, and split resolutions persist in D1.
-7. Use **Review & Finalize** to regenerate, edit, save, and copy the deterministic message, then finalize or reopen the plan.
+7. To exercise a one-day schedule, choose **Add Special Schedule**, provide one date, a name, and the same sanitized workbook, resolve mappings, and confirm activation. It does not require a normal Schedule Version for that date.
+8. Use **Review & Finalize** to regenerate, edit, save, and copy the deterministic message, then finalize or reopen the plan.
 
 The seeded fictional schedule remains useful for deterministic Default Sub Plan and conflict testing. Production staff mappings, Default Sub Plans, authentication, school timezone, and School Sub availability require real-school configuration before deployment.
 
@@ -128,4 +129,4 @@ School logo configuration is represented in D1 and the shell already has a schoo
 
 ## Current boundary
 
-The MVP vertical slice is implemented without student data, email delivery, teacher portals, arbitrary Word-document parsing, calendar synchronization, AI scheduling, or global optimization. Special one-day schedules are supported by the schedule-resolution service and persistence model; a polished Special Schedule administration screen remains deferred.
+The MVP vertical slice is implemented without student data, email delivery, teacher portals, arbitrary Word-document parsing, calendar synchronization, AI scheduling, or global optimization. Special one-day schedules have a dedicated staged import, mapping, activation, configuration, deletion, and archival workflow and are authoritative independently of normal schedule availability.

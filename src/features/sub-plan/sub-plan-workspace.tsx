@@ -137,7 +137,9 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
           </div>
           <p className="text-muted-foreground mt-0.5 text-xs">
             {detail
-              ? `${detail.plan.scheduleName}${detail.plan.specialScheduleName ? ` Â· Special Schedule: ${detail.plan.specialScheduleName}` : ''}`
+              ? detail.plan.specialScheduleName
+                ? `Special Schedule: ${detail.plan.specialScheduleName}`
+                : detail.plan.scheduleName
               : 'Resolving the pinned Schedule Version'}
           </p>
         </div>
@@ -204,12 +206,14 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
         </div>
       </header>
 
-      {detail && detail.plan.dayType !== detail.plan.expectedDayType && (
-        <div className="border-warning/30 bg-warning-soft text-warning-dark rounded-md border px-3 py-2 text-xs">
-          A/B override active: expected {detail.plan.expectedDayType}, selected{' '}
-          {detail.plan.dayType}.
-        </div>
-      )}
+      {detail &&
+        detail.plan.expectedDayType !== null &&
+        detail.plan.dayType !== detail.plan.expectedDayType && (
+          <div className="border-warning/30 bg-warning-soft text-warning-dark rounded-md border px-3 py-2 text-xs">
+            A/B override active: expected {detail.plan.expectedDayType},
+            selected {detail.plan.dayType}.
+          </div>
+        )}
       {error && <ErrorBanner message={error} />}
       {detail?.absences
         .filter((absence) => absence.informationalWarning)

@@ -100,9 +100,9 @@ export interface PlanDetail {
     readonly id: string;
     readonly date: string;
     readonly dayType: 'A' | 'B';
-    readonly expectedDayType: 'A' | 'B';
-    readonly scheduleVersionId: string;
-    readonly scheduleName: string;
+    readonly expectedDayType: 'A' | 'B' | null;
+    readonly scheduleVersionId: string | null;
+    readonly scheduleName: string | null;
     readonly specialScheduleId: string | null;
     readonly specialScheduleName: string | null;
     readonly status: 'draft' | 'finalized';
@@ -169,15 +169,19 @@ export interface CandidatePreview {
 
 export interface ScheduleImportDetail {
   readonly id: string;
+  readonly kind: 'normal' | 'special';
+  readonly name: string;
   readonly sourceFileName: string;
   readonly sourceFileSha256: string;
   readonly status: 'staged' | 'ready' | 'activated' | 'failed';
-  readonly effectiveFrom: string;
+  readonly effectiveFrom: string | null;
   readonly effectiveTo: string | null;
+  readonly specialDate: string | null;
   readonly sheetName: string | null;
   readonly aBDetected: boolean;
   readonly createdAt: string;
   readonly activatedScheduleVersionId: string | null;
+  readonly activatedSpecialScheduleId: string | null;
   readonly activatedAt: string | null;
   readonly entryCount: number;
   readonly staffMappings: readonly ImportMapping[];
@@ -226,6 +230,7 @@ export interface SpecialScheduleSummary {
   readonly createdAt: string;
   readonly entryCount: number;
   readonly planReferenceCount: number;
+  readonly canDelete: boolean;
 }
 
 export interface ScheduleManagementData {
@@ -374,19 +379,47 @@ export async function listScheduleImports(): Promise<ScheduleImportDetail[]> {
 
 export async function uploadScheduleImport(input: {
   readonly file: File;
-  readonly effectiveFrom: string;
-  readonly effectiveTo: string;
+  readonly kind: 'normal' | 'special';
+  readonly name: string;
+  readonly effectiveFrom?: string;
+  readonly effectiveTo?: string;
+  readonly specialDate?: string;
 }): Promise<ScheduleImportDetail> {
   const form = new FormData();
   form.set('file', input.file);
-  form.set('effectiveFrom', input.effectiveFrom);
+  form.set('kind', input.kind);
+  form.set('name', input.name);
+  if (input.effectiveFrom) form.set('effectiveFrom', input.effectiveFrom);
   if (input.effectiveTo) form.set('effectiveTo', input.effectiveTo);
+  if (input.specialDate) form.set('specialDate', input.specialDate);
   const result = await apiRequest<{ import: ScheduleImportDetail }>(
     '/api/schedule-imports',
     {
       method: 'POST',
       body: form,
     },
+  );
+  return result.import;
+}
+
+export async function configureScheduleImport(
+  importId: string,
+  input:
+    | {
+        readonly kind: 'normal';
+        readonly name: string;
+        readonly effectiveFrom: string;
+        readonly effectiveTo: string | null;
+      }
+    | {
+        readonly kind: 'special';
+        readonly name: string;
+        readonly date: string;
+      },
+): Promise<ScheduleImportDetail> {
+  const result = await apiRequest<{ import: ScheduleImportDetail }>(
+    `/api/schedule-imports/${importId}`,
+    { method: 'PATCH', body: JSON.stringify(input) },
   );
   return result.import;
 }
@@ -418,6 +451,16 @@ export async function activateScheduleImport(
       method: 'POST',
       body: JSON.stringify({ name, confirmPredecessorClosure }),
     },
+  );
+  return result.import;
+}
+
+export async function activateSpecialScheduleImport(
+  importId: string,
+): Promise<ScheduleImportDetail> {
+  const result = await apiRequest<{ import: ScheduleImportDetail }>(
+    `/api/schedule-imports/${importId}/activate-special`,
+    { method: 'POST', body: JSON.stringify({ confirmed: true }) },
   );
   return result.import;
 }
@@ -468,6 +511,33 @@ export async function archiveSchedule(
     method: 'POST',
     body: '{}',
   });
+}
+
+export async function configureSpecialSchedule(
+  id: string,
+  input: { readonly name: string; readonly date: string },
+): Promise<ScheduleManagementData> {
+  return apiRequest<ScheduleManagementData>(`/api/special-schedules/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteSpecialSchedule(
+  id: string,
+): Promise<ScheduleManagementData> {
+  return apiRequest<ScheduleManagementData>(`/api/special-schedules/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function archiveSpecialSchedule(
+  id: string,
+): Promise<ScheduleManagementData> {
+  return apiRequest<ScheduleManagementData>(
+    `/api/special-schedules/${id}/archive`,
+    { method: 'POST', body: '{}' },
+  );
 }
 
 async function apiRequest<T = unknown>(

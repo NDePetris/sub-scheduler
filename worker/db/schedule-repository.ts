@@ -90,6 +90,7 @@ export class ScheduleRepository {
         createdAt: row.created_at,
         entryCount: row.entry_count,
         planReferenceCount: row.plan_reference_count,
+        canDelete: row.plan_reference_count === 0,
       })),
     };
   }
@@ -196,6 +197,67 @@ export class ScheduleRepository {
     return this.list();
   }
 
+  async configureSpecial(
+    id: string,
+    input: { readonly name: string; readonly date: string },
+  ) {
+    const target = await this.special(id);
+    const references = await this.specialPlanReferences(id);
+    if (references > 0 && input.date !== target.date) {
+      throw new HttpError(
+        409,
+        'special_schedule_date_pinned',
+        'A Special Schedule used by a Sub Plan cannot be moved to another date. Archive it and create a new Special Schedule instead.',
+      );
+    }
+    const conflict = await this.db
+      .prepare(`SELECT name FROM special_schedules WHERE date = ? AND id <> ?`)
+      .bind(input.date, id)
+      .first<{ name: string }>();
+    if (conflict) {
+      throw new HttpError(
+        409,
+        'special_schedule_date_conflict',
+        `${conflict.name} is already configured for ${input.date}.`,
+      );
+    }
+    await this.db
+      .prepare(`UPDATE special_schedules SET name = ?, date = ? WHERE id = ?`)
+      .bind(input.name, input.date, id)
+      .run();
+    return this.list();
+  }
+
+  async deleteSpecial(id: string) {
+    const target = await this.special(id);
+    const references = await this.specialPlanReferences(id);
+    if (references > 0) {
+      throw new HttpError(
+        409,
+        'special_schedule_in_use',
+        `${target.name} is referenced by ${references} historical Sub Plan${references === 1 ? '' : 's'} and cannot be deleted. Archive it instead.`,
+      );
+    }
+    await this.db.batch([
+      this.db
+        .prepare(
+          `DELETE FROM schedule_imports WHERE activated_special_schedule_id = ?`,
+        )
+        .bind(id),
+      this.db.prepare(`DELETE FROM special_schedules WHERE id = ?`).bind(id),
+    ]);
+    return this.list();
+  }
+
+  async archiveSpecial(id: string) {
+    await this.special(id);
+    await this.db
+      .prepare(`UPDATE special_schedules SET status = 'retired' WHERE id = ?`)
+      .bind(id)
+      .run();
+    return this.list();
+  }
+
   private async version(id: string) {
     const row = await this.db
       .prepare(
@@ -223,6 +285,33 @@ export class ScheduleRepository {
     const row = await this.db
       .prepare(
         `SELECT COUNT(*) AS count FROM daily_sub_plans WHERE schedule_version_id = ?`,
+      )
+      .bind(id)
+      .first<{ count: number }>();
+    return row?.count ?? 0;
+  }
+
+  private async special(id: string) {
+    const row = await this.db
+      .prepare(
+        `SELECT id, name, date, status FROM special_schedules WHERE id = ?`,
+      )
+      .bind(id)
+      .first<{ id: string; name: string; date: string; status: string }>();
+    if (!row) {
+      throw new HttpError(
+        404,
+        'special_schedule_not_found',
+        'Special Schedule not found.',
+      );
+    }
+    return row;
+  }
+
+  private async specialPlanReferences(id: string): Promise<number> {
+    const row = await this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM daily_sub_plans WHERE special_schedule_id = ?`,
       )
       .bind(id)
       .first<{ count: number }>();

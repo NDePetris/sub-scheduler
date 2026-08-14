@@ -19,14 +19,14 @@ interface PlanRow {
   id: string;
   date: string;
   day_type: DayType;
-  schedule_version_id: string;
+  schedule_version_id: string | null;
   special_schedule_id: string | null;
   status: 'draft' | 'finalized';
   finalized_at: string | null;
   finalized_by: string | null;
-  schedule_name: string;
+  schedule_name: string | null;
   special_schedule_name: string | null;
-  effective_from: string;
+  effective_from: string | null;
 }
 
 interface ScheduleResolutionRow {
@@ -187,7 +187,10 @@ export class PlanningRepository {
 
     const resolved = await this.resolveSchedule(date);
     const dayType =
-      requestedDayType ?? expectedDayType(date, resolved.normal.effective_from);
+      requestedDayType ??
+      (resolved.normal
+        ? expectedDayType(date, resolved.normal.effective_from)
+        : 'A');
     const planId = crypto.randomUUID();
     await this.db
       .prepare(
@@ -200,7 +203,7 @@ export class PlanningRepository {
         planId,
         date,
         dayType,
-        resolved.normal.id,
+        resolved.normal?.id ?? null,
         resolved.special?.id ?? null,
         actorId,
         actorId,
@@ -217,6 +220,7 @@ export class PlanningRepository {
         'plan_not_found',
         'No Sub Plan exists for this date.',
       );
+    assertPlanSource(plan);
     const [absences, assignments, schedule, settings, message] =
       await Promise.all([
         this.absencesForDate(date),
@@ -307,7 +311,9 @@ export class PlanningRepository {
         id: plan.id,
         date: plan.date,
         dayType: plan.day_type,
-        expectedDayType: expectedDayType(plan.date, plan.effective_from),
+        expectedDayType: plan.effective_from
+          ? expectedDayType(plan.date, plan.effective_from)
+          : null,
         scheduleVersionId: plan.schedule_version_id,
         scheduleName: plan.schedule_name,
         specialScheduleId: plan.special_schedule_id,
@@ -1296,20 +1302,22 @@ export class PlanningRepository {
     if (existing) return { plan: existing, insert: null };
     const resolved = await this.resolveSchedule(date);
     const planId = crypto.randomUUID();
-    const dayType = expectedDayType(date, resolved.normal.effective_from);
+    const dayType = resolved.normal
+      ? expectedDayType(date, resolved.normal.effective_from)
+      : 'A';
     return {
       plan: {
         id: planId,
         date,
         day_type: dayType,
-        schedule_version_id: resolved.normal.id,
+        schedule_version_id: resolved.normal?.id ?? null,
         special_schedule_id: resolved.special?.id ?? null,
         status: 'draft',
         finalized_at: null,
         finalized_by: null,
-        schedule_name: resolved.normal.name,
+        schedule_name: resolved.normal?.name ?? null,
         special_schedule_name: resolved.special?.name ?? null,
-        effective_from: resolved.normal.effective_from,
+        effective_from: resolved.normal?.effective_from ?? null,
       },
       insert: this.db
         .prepare(
@@ -1322,7 +1330,7 @@ export class PlanningRepository {
           planId,
           date,
           dayType,
-          resolved.normal.id,
+          resolved.normal?.id ?? null,
           resolved.special?.id ?? null,
           actorId,
           actorId,
@@ -1331,28 +1339,27 @@ export class PlanningRepository {
   }
 
   private async resolveSchedule(date: string) {
-    const [special, normal] = await Promise.all([
-      this.db
-        .prepare(
-          `SELECT id, name FROM special_schedules WHERE date = ? AND status = 'active' LIMIT 1`,
-        )
-        .bind(date)
-        .first<SpecialScheduleRow>(),
-      this.db
-        .prepare(
-          `SELECT id, name, effective_from FROM schedule_versions
-            WHERE status = 'active' AND effective_from <= ?
-              AND (effective_to IS NULL OR effective_to >= ?)
-            ORDER BY effective_from DESC LIMIT 2`,
-        )
-        .bind(date, date)
-        .all<ScheduleResolutionRow>(),
-    ]);
+    const special = await this.db
+      .prepare(
+        `SELECT id, name FROM special_schedules WHERE date = ? AND status = 'active' LIMIT 1`,
+      )
+      .bind(date)
+      .first<SpecialScheduleRow>();
+    if (special) return { normal: null, special };
+    const normal = await this.db
+      .prepare(
+        `SELECT id, name, effective_from FROM schedule_versions
+          WHERE status = 'active' AND effective_from <= ?
+            AND (effective_to IS NULL OR effective_to >= ?)
+          ORDER BY effective_from DESC LIMIT 2`,
+      )
+      .bind(date, date)
+      .all<ScheduleResolutionRow>();
     if (normal.results.length === 0) {
       throw new HttpError(
         409,
-        'schedule_not_found',
-        'No active normal Schedule Version applies to this date.',
+        'no_schedule_for_date',
+        'No active Special Schedule or normal Schedule Version is configured for this date.',
       );
     }
     if (normal.results.length > 1) {
@@ -1362,7 +1369,7 @@ export class PlanningRepository {
         'Multiple active Schedule Versions apply to this date.',
       );
     }
-    return { normal: normal.results[0]!, special };
+    return { normal: normal.results[0]!, special: null };
   }
 
   private async findPlan(date: string): Promise<PlanRow | null> {
@@ -1373,7 +1380,7 @@ export class PlanningRepository {
                 sv.name AS schedule_name, ss.name AS special_schedule_name,
                 sv.effective_from
            FROM daily_sub_plans p
-           JOIN schedule_versions sv ON sv.id = p.schedule_version_id
+      LEFT JOIN schedule_versions sv ON sv.id = p.schedule_version_id
       LEFT JOIN special_schedules ss ON ss.id = p.special_schedule_id
           WHERE p.date = ?`,
       )
@@ -1389,17 +1396,19 @@ export class PlanningRepository {
                 sv.name AS schedule_name, ss.name AS special_schedule_name,
                 sv.effective_from
            FROM daily_sub_plans p
-           JOIN schedule_versions sv ON sv.id = p.schedule_version_id
+      LEFT JOIN schedule_versions sv ON sv.id = p.schedule_version_id
       LEFT JOIN special_schedules ss ON ss.id = p.special_schedule_id
           WHERE p.id = ?`,
       )
       .bind(id)
       .first<PlanRow>();
     if (!row) throw new HttpError(404, 'plan_not_found', 'Sub Plan not found.');
+    assertPlanSource(row);
     return row;
   }
 
   private async entriesForPlan(plan: PlanRow): Promise<EntryRow[]> {
+    assertPlanSource(plan);
     const table = plan.special_schedule_id
       ? 'special_schedule_entries'
       : 'schedule_entries';
@@ -1407,6 +1416,13 @@ export class PlanningRepository {
       ? 'special_schedule_id'
       : 'schedule_version_id';
     const sourceId = plan.special_schedule_id ?? plan.schedule_version_id;
+    if (!sourceId) {
+      throw new HttpError(
+        500,
+        'invalid_schedule_source',
+        'The Sub Plan has no pinned schedule source.',
+      );
+    }
     const result = await this.db
       .prepare(
         `SELECT e.id, e.staff_id, s.display_name AS staff_name, e.day_type,
@@ -1630,6 +1646,19 @@ function timeRangesOverlap(
 ): boolean {
   if (!absenceStart || !absenceEnd) return true;
   return absenceStart < endTime && startTime < absenceEnd;
+}
+
+function assertPlanSource(plan: PlanRow): void {
+  if (
+    (plan.schedule_version_id !== null) ===
+    (plan.special_schedule_id !== null)
+  ) {
+    throw new HttpError(
+      500,
+      'invalid_schedule_source',
+      'The Sub Plan must pin exactly one schedule source.',
+    );
+  }
 }
 
 function absenceWarning(

@@ -10,15 +10,19 @@ interface IdentityRow {
 
 interface ImportRow {
   id: string;
+  import_kind: 'normal' | 'special';
+  schedule_name: string;
   source_file_name: string;
   source_file_sha256: string;
   status: string;
-  effective_from: string;
+  effective_from: string | null;
   effective_to: string | null;
+  special_date: string | null;
   sheet_name: string | null;
   a_b_detected: number;
   created_at: string;
   activated_schedule_version_id: string | null;
+  activated_special_schedule_id: string | null;
   activated_at: string | null;
 }
 
@@ -90,21 +94,46 @@ export class ImportRepository {
   constructor(private readonly db: D1Database) {}
 
   async stage(input: {
+    readonly kind?: 'normal' | 'special';
+    readonly name?: string;
     readonly fileName: string;
     readonly sha256: string;
-    readonly effectiveFrom: string;
+    readonly effectiveFrom?: string;
     readonly effectiveTo: string | null;
+    readonly specialDate?: string;
     readonly candidate: SchoolScheduleCandidate;
     readonly issues: readonly ImportIssue[];
     readonly actorId: string;
   }) {
+    const kind = input.kind ?? 'normal';
+    const name = input.name?.trim() || input.fileName.replace(/\.xlsx$/i, '');
+    const effectiveFrom = kind === 'normal' ? input.effectiveFrom : null;
+    const effectiveTo = kind === 'normal' ? input.effectiveTo : null;
+    const specialDate = kind === 'special' ? input.specialDate : null;
+    if (kind === 'normal' && !effectiveFrom) {
+      throw new HttpError(
+        400,
+        'effective_from_required',
+        'Effective From is required.',
+      );
+    }
+    if (kind === 'special' && !specialDate) {
+      throw new HttpError(
+        400,
+        'special_date_required',
+        'Special Schedule date is required.',
+      );
+    }
+    if (kind === 'special') await this.assertSpecialDateAvailable(specialDate!);
     const existing = await this.db
       .prepare(
         `SELECT id FROM schedule_imports
-          WHERE source_file_sha256 = ? AND effective_from = ?
-            AND COALESCE(effective_to, '') = COALESCE(?, '')`,
+          WHERE import_kind = ? AND source_file_sha256 = ?
+            AND COALESCE(effective_from, '') = COALESCE(?, '')
+            AND COALESCE(effective_to, '') = COALESCE(?, '')
+            AND COALESCE(special_date, '') = COALESCE(?, '')`,
       )
-      .bind(input.sha256, input.effectiveFrom, input.effectiveTo)
+      .bind(kind, input.sha256, effectiveFrom, effectiveTo, specialDate)
       .first<{ id: string }>();
     if (existing) return this.get(existing.id);
 
@@ -139,18 +168,21 @@ export class ImportRepository {
       this.db
         .prepare(
           `INSERT INTO schedule_imports (
-             id, source_file_name, source_file_sha256, status, effective_from,
-             effective_to, sheet_name, recognized_staff_count,
+             id, import_kind, schedule_name, source_file_name, source_file_sha256,
+             status, effective_from, effective_to, special_date, sheet_name, recognized_staff_count,
              recognized_room_count, a_b_detected, created_by
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           importId,
+          kind,
+          name,
           input.fileName,
           input.sha256,
           status,
-          input.effectiveFrom,
-          input.effectiveTo,
+          effectiveFrom,
+          effectiveTo,
+          specialDate,
           input.candidate.sheetName,
           recognizedStaff,
           recognizedRooms,
@@ -248,9 +280,10 @@ export class ImportRepository {
   async list() {
     const rows = await this.db
       .prepare(
-        `SELECT id, source_file_name, source_file_sha256, status, effective_from,
-                effective_to, sheet_name, a_b_detected, created_at,
-                activated_schedule_version_id, activated_at
+        `SELECT id, import_kind, schedule_name, source_file_name, source_file_sha256,
+                status, effective_from, effective_to, special_date, sheet_name,
+                a_b_detected, created_at, activated_schedule_version_id,
+                activated_special_schedule_id, activated_at
            FROM schedule_imports
           ORDER BY created_at DESC`,
       )
@@ -261,9 +294,10 @@ export class ImportRepository {
   async get(id: string) {
     const row = await this.db
       .prepare(
-        `SELECT id, source_file_name, source_file_sha256, status, effective_from,
-                effective_to, sheet_name, a_b_detected, created_at,
-                activated_schedule_version_id, activated_at
+        `SELECT id, import_kind, schedule_name, source_file_name, source_file_sha256,
+                status, effective_from, effective_to, special_date, sheet_name,
+                a_b_detected, created_at, activated_schedule_version_id,
+                activated_special_schedule_id, activated_at
            FROM schedule_imports WHERE id = ?`,
       )
       .bind(id)
@@ -275,6 +309,65 @@ export class ImportRepository {
         'Schedule import not found.',
       );
     return this.hydrate(row);
+  }
+
+  async configure(
+    id: string,
+    input:
+      | {
+          readonly kind: 'normal';
+          readonly name: string;
+          readonly effectiveFrom: string;
+          readonly effectiveTo: string | null;
+        }
+      | {
+          readonly kind: 'special';
+          readonly name: string;
+          readonly date: string;
+        },
+  ) {
+    const detail = await this.get(id);
+    if (detail.status === 'activated') {
+      throw new HttpError(
+        409,
+        'import_already_activated',
+        'Activated imports cannot be changed through staging configuration.',
+      );
+    }
+    if (detail.kind !== input.kind) {
+      throw new HttpError(
+        400,
+        'import_kind_mismatch',
+        'The import kind cannot be changed.',
+      );
+    }
+    if (input.kind === 'normal') {
+      if (input.effectiveTo && input.effectiveTo < input.effectiveFrom) {
+        throw new HttpError(
+          400,
+          'invalid_effective_range',
+          'Effective To must not precede Effective From.',
+        );
+      }
+      await this.db
+        .prepare(
+          `UPDATE schedule_imports
+              SET schedule_name = ?, effective_from = ?, effective_to = ?
+            WHERE id = ? AND status <> 'activated' AND import_kind = 'normal'`,
+        )
+        .bind(input.name, input.effectiveFrom, input.effectiveTo, id)
+        .run();
+    } else {
+      await this.assertSpecialDateAvailable(input.date, id);
+      await this.db
+        .prepare(
+          `UPDATE schedule_imports SET schedule_name = ?, special_date = ?
+            WHERE id = ? AND status <> 'activated' AND import_kind = 'special'`,
+        )
+        .bind(input.name, input.date, id)
+        .run();
+    }
+    return this.get(id);
   }
 
   async mapValue(input: {
@@ -326,6 +419,13 @@ export class ImportRepository {
 
   async activationPreview(importId: string): Promise<ActivationPreview> {
     const detail = await this.get(importId);
+    if (detail.kind !== 'normal') {
+      throw new HttpError(
+        400,
+        'normal_import_required',
+        'Special Schedules use their dedicated activation operation.',
+      );
+    }
     if (detail.status === 'activated') {
       return { action: 'activate', predecessor: null };
     }
@@ -351,7 +451,7 @@ export class ImportRepository {
     const predecessors = active.results.filter(
       (version) =>
         version.effective_to === null &&
-        version.effective_from < detail.effectiveFrom,
+        version.effective_from < detail.effectiveFrom!,
     );
     if (predecessors.length > 1) {
       throw new HttpError(
@@ -363,7 +463,12 @@ export class ImportRepository {
     const predecessor = predecessors[0] ?? null;
     for (const version of active.results) {
       if (version.id === predecessor?.id) continue;
-      if (rangesOverlap(version, detail)) {
+      if (
+        rangesOverlap(version, {
+          effectiveFrom: detail.effectiveFrom!,
+          effectiveTo: detail.effectiveTo,
+        })
+      ) {
         throw scheduleConflict(version);
       }
     }
@@ -375,7 +480,7 @@ export class ImportRepository {
             name: predecessor.name,
             effectiveFrom: predecessor.effective_from,
             effectiveTo: null,
-            proposedEffectiveTo: shiftSchoolDate(detail.effectiveFrom, -1),
+            proposedEffectiveTo: shiftSchoolDate(detail.effectiveFrom!, -1),
           },
         }
       : { action: 'activate', predecessor: null };
@@ -383,11 +488,18 @@ export class ImportRepository {
 
   async activate(
     importId: string,
-    name: string,
+    name: string | undefined,
     actorId: string,
     confirmPredecessorClosure = false,
   ) {
     const detail = await this.get(importId);
+    if (detail.kind !== 'normal') {
+      throw new HttpError(
+        400,
+        'normal_import_required',
+        'Use Activate Special Schedule for this import.',
+      );
+    }
     if (detail.status === 'activated') return detail;
     const preview = await this.activationPreview(importId);
     if (preview.action === 'close_predecessor' && !confirmPredecessorClosure) {
@@ -453,8 +565,8 @@ export class ImportRepository {
         )
         .bind(
           scheduleVersionId,
-          name,
-          detail.effectiveFrom,
+          name?.trim() || detail.name,
+          detail.effectiveFrom!,
           detail.effectiveTo,
           detail.sourceFileName,
           detail.sourceFileSha256,
@@ -495,6 +607,87 @@ export class ImportRepository {
             WHERE id = ? AND status <> 'activated'`,
         )
         .bind(scheduleVersionId, now, importId),
+    );
+    await this.db.batch(statements);
+    return this.get(importId);
+  }
+
+  async activateSpecial(importId: string, actorId: string) {
+    const detail = await this.get(importId);
+    if (detail.kind !== 'special') {
+      throw new HttpError(
+        400,
+        'special_import_required',
+        'This is not a Special Schedule import.',
+      );
+    }
+    if (detail.status === 'activated') return detail;
+    if (
+      detail.blockingErrors > 0 ||
+      detail.unmappedStaff > 0 ||
+      detail.unmappedRooms > 0
+    ) {
+      throw new HttpError(
+        409,
+        'import_not_ready',
+        'Resolve blocking validation issues and required mappings before activation.',
+      );
+    }
+    await this.assertSpecialDateAvailable(detail.specialDate!, importId);
+    const staged = await this.mappedEntries(importId);
+    const specialScheduleId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const statements: D1PreparedStatement[] = [
+      this.db
+        .prepare(
+          `INSERT INTO special_schedules (
+             id, date, name, status, source_file_name, source_file_sha256,
+             created_by, activated_by, activated_at
+           ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          specialScheduleId,
+          detail.specialDate,
+          detail.name,
+          detail.sourceFileName,
+          detail.sourceFileSha256,
+          actorId,
+          actorId,
+          now,
+        ),
+    ];
+    for (const entry of staged) {
+      statements.push(
+        this.db
+          .prepare(
+            `INSERT INTO special_schedule_entries (
+               id, special_schedule_id, staff_id, day_type, start_time, end_time,
+               activity_type, category, description, room_id, requires_sub
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            crypto.randomUUID(),
+            specialScheduleId,
+            entry.staff_id,
+            entry.day_type,
+            entry.start_time,
+            entry.end_time,
+            entry.activity_type,
+            entry.category,
+            entry.description,
+            entry.room_id,
+            entry.requires_sub,
+          ),
+      );
+    }
+    statements.push(
+      this.db
+        .prepare(
+          `UPDATE schedule_imports
+              SET status = 'activated', activated_special_schedule_id = ?, activated_at = ?
+            WHERE id = ? AND status <> 'activated'`,
+        )
+        .bind(specialScheduleId, now, importId),
     );
     await this.db.batch(statements);
     return this.get(importId);
@@ -551,15 +744,19 @@ export class ImportRepository {
     ).length;
     return {
       id: row.id,
+      kind: row.import_kind,
+      name: row.schedule_name,
       sourceFileName: row.source_file_name,
       sourceFileSha256: row.source_file_sha256,
       status: row.status,
       effectiveFrom: row.effective_from,
       effectiveTo: row.effective_to,
+      specialDate: row.special_date,
       sheetName: row.sheet_name,
       aBDetected: row.a_b_detected === 1,
       createdAt: row.created_at,
       activatedScheduleVersionId: row.activated_schedule_version_id,
+      activatedSpecialScheduleId: row.activated_special_schedule_id,
       activatedAt: row.activated_at,
       entryCount: entries?.count ?? 0,
       staffMappings: staff.results.map(toMapping),
@@ -587,6 +784,61 @@ export class ImportRepository {
         cell: issue.source_cell,
       })),
     };
+  }
+
+  private async mappedEntries(importId: string): Promise<StagedEntryRow[]> {
+    const staged = await this.db
+      .prepare(
+        `SELECT e.id, sm.staff_id, rm.room_id, e.day_type, e.start_time,
+                e.end_time, e.activity_type, e.category, e.description,
+                e.requires_sub
+           FROM staged_schedule_entries e
+           JOIN schedule_import_staff sm
+             ON sm.import_id = e.import_id
+            AND sm.display_value = e.staff_display_value
+      LEFT JOIN schedule_import_rooms rm
+             ON rm.import_id = e.import_id
+            AND rm.display_value = e.room_display_value
+          WHERE e.import_id = ?
+          ORDER BY e.source_cell`,
+      )
+      .bind(importId)
+      .all<StagedEntryRow>();
+    if (
+      staged.results.length === 0 ||
+      staged.results.some((entry) => !entry.staff_id)
+    ) {
+      throw new HttpError(
+        409,
+        'import_not_ready',
+        'The import does not contain fully mapped entries.',
+      );
+    }
+    return staged.results;
+  }
+
+  private async assertSpecialDateAvailable(
+    date: string,
+    excludeImportId = '',
+  ): Promise<void> {
+    const existing = await this.db
+      .prepare(
+        `SELECT name FROM special_schedules WHERE date = ?
+         UNION ALL
+         SELECT schedule_name AS name FROM schedule_imports
+          WHERE import_kind = 'special' AND special_date = ?
+            AND status <> 'activated' AND id <> ?
+         LIMIT 1`,
+      )
+      .bind(date, date, excludeImportId)
+      .first<{ name: string }>();
+    if (existing) {
+      throw new HttpError(
+        409,
+        'special_schedule_date_conflict',
+        `${existing.name} is already configured for ${date}. Configure or remove that Special Schedule instead.`,
+      );
+    }
   }
 
   private async createIdentity(

@@ -71,6 +71,29 @@ const activationSchema = z.object({
   name: z.string().trim().min(1).max(120),
   confirmPredecessorClosure: z.boolean().default(false),
 });
+const specialActivationSchema = z.object({ confirmed: z.literal(true) });
+const importConfigurationSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('normal'),
+      name: z.string().trim().min(1).max(120),
+      effectiveFrom: dateSchema,
+      effectiveTo: dateSchema.nullable(),
+    })
+    .superRefine((value, context) => {
+      if (value.effectiveTo && value.effectiveTo < value.effectiveFrom) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Effective To must not precede Effective From.',
+        });
+      }
+    }),
+  z.object({
+    kind: z.literal('special'),
+    name: z.string().trim().min(1).max(120),
+    date: dateSchema,
+  }),
+]);
 const scheduleConfigurationSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
@@ -85,6 +108,10 @@ const scheduleConfigurationSchema = z
       });
     }
   });
+const specialScheduleConfigurationSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  date: dateSchema,
+});
 const resolveSchema = z.object({
   action: z.enum(['assign', 'leave_uncovered', 'structured', 'split']),
   staffId: z.string().optional(),
@@ -196,12 +223,22 @@ export default {
             'Choose an .xlsx schedule workbook.',
           );
         }
-        const effectiveFrom = dateSchema.parse(form.get('effectiveFrom'));
+        const kind = form.get('kind') === 'special' ? 'special' : 'normal';
+        const name = z.string().trim().min(1).max(120).parse(form.get('name'));
+        const effectiveFrom =
+          kind === 'normal'
+            ? dateSchema.parse(form.get('effectiveFrom'))
+            : undefined;
         const effectiveToValue = form.get('effectiveTo');
-        const effectiveTo = effectiveToValue
-          ? dateSchema.parse(effectiveToValue)
-          : null;
-        if (effectiveTo && effectiveTo < effectiveFrom) {
+        const effectiveTo =
+          kind === 'normal' && effectiveToValue
+            ? dateSchema.parse(effectiveToValue)
+            : null;
+        const specialDate =
+          kind === 'special'
+            ? dateSchema.parse(form.get('specialDate'))
+            : undefined;
+        if (effectiveFrom && effectiveTo && effectiveTo < effectiveFrom) {
           throw new HttpError(
             400,
             'invalid_effective_range',
@@ -224,10 +261,13 @@ export default {
           .map((value) => value.toString(16).padStart(2, '0'))
           .join('');
         const result = await importRepository.stage({
+          kind,
+          name,
           fileName: file.name,
           sha256,
           effectiveFrom,
           effectiveTo,
+          specialDate,
           candidate: parsed.candidate,
           issues: parsed.issues,
           actorId: context.actor.id,
@@ -245,6 +285,13 @@ export default {
       if (importMatch?.[1] && request.method === 'GET') {
         return jsonSuccess(
           { import: await importRepository.get(importMatch[1]) },
+          requestId,
+        );
+      }
+      if (importMatch?.[1] && request.method === 'PATCH') {
+        const body = importConfigurationSchema.parse(await readJson(request));
+        return jsonSuccess(
+          { import: await importRepository.configure(importMatch[1], body) },
           requestId,
         );
       }
@@ -300,6 +347,23 @@ export default {
         );
       }
 
+      const activateSpecialMatch =
+        /^\/api\/schedule-imports\/([^/]+)\/activate-special$/.exec(
+          url.pathname,
+        );
+      if (activateSpecialMatch?.[1] && request.method === 'POST') {
+        specialActivationSchema.parse(await readJson(request));
+        return jsonSuccess(
+          {
+            import: await importRepository.activateSpecial(
+              activateSpecialMatch[1],
+              context.actor.id,
+            ),
+          },
+          requestId,
+        );
+      }
+
       if (url.pathname === '/api/schedules' && request.method === 'GET') {
         return jsonSuccess(await scheduleRepository.list(), requestId);
       }
@@ -325,6 +389,36 @@ export default {
       if (archiveScheduleMatch?.[1] && request.method === 'POST') {
         return jsonSuccess(
           await scheduleRepository.archive(archiveScheduleMatch[1]),
+          requestId,
+        );
+      }
+
+      const specialScheduleMatch = /^\/api\/special-schedules\/([^/]+)$/.exec(
+        url.pathname,
+      );
+      if (specialScheduleMatch?.[1] && request.method === 'PATCH') {
+        const body = specialScheduleConfigurationSchema.parse(
+          await readJson(request),
+        );
+        return jsonSuccess(
+          await scheduleRepository.configureSpecial(
+            specialScheduleMatch[1],
+            body,
+          ),
+          requestId,
+        );
+      }
+      if (specialScheduleMatch?.[1] && request.method === 'DELETE') {
+        return jsonSuccess(
+          await scheduleRepository.deleteSpecial(specialScheduleMatch[1]),
+          requestId,
+        );
+      }
+      const archiveSpecialMatch =
+        /^\/api\/special-schedules\/([^/]+)\/archive$/.exec(url.pathname);
+      if (archiveSpecialMatch?.[1] && request.method === 'POST') {
+        return jsonSuccess(
+          await scheduleRepository.archiveSpecial(archiveSpecialMatch[1]),
           requestId,
         );
       }

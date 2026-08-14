@@ -91,18 +91,19 @@ Activation must reject ambiguous overlapping active ranges. When activating a ne
 
 ### Special schedules
 
-A Special Schedule is keyed to exactly one date. It overrides the normal schedule only for that date and never mutates normal effective ranges. Its entries may carry the applicable day designation, but the plan still records the administrator-selected A/B value for context and default matching.
+A Special Schedule is a complete schedule keyed to exactly one date. It is independent of normal schedule availability, overrides normal resolution for that date, and never mutates or stores a relationship to normal effective ranges. Its entries may carry the applicable day designation, while the plan records the administrator-selected A/B value for entry filtering and default matching.
 
 ### Resolution and historical stability
 
 When opening a date with no Daily Sub Plan:
 
-1. Determine the expected A/B designation, then allow administrator override.
-2. Look for an activated Special Schedule for the date.
-3. If present, select it; otherwise resolve the normal effective-dated Schedule Version.
-4. Create the Daily Sub Plan and store the exact selected references.
+1. Look for an active Special Schedule for the exact date.
+2. If present, pin it without resolving or pinning a normal Schedule Version.
+3. Otherwise resolve and pin the one active normal effective-dated Schedule Version.
+4. If neither source exists, return `no_schedule_for_date` and create no plan.
+5. Store the selected A/B value. A normal plan derives the provisional expected value from its normal Schedule Version until a real calendar exists; a Special-only plan exposes no expected value.
 
-Once created, a plan continues using its pinned schedule reference. Later activation or effective-date edits affect new plans, not historical ones. Rebuilding assignments within a plan uses its pinned schedule unless an administrator performs an explicit, separately designed rebase action; automatic rebasing is outside the MVP.
+A Daily Sub Plan pins exactly one authoritative source: a normal Schedule Version or a Special Schedule. Once created, it continues using that source. Later activation, archival, or effective-date edits affect new plans, not historical ones. Rebuilding assignments within a plan uses its pinned schedule unless an administrator performs an explicit, separately designed rebase action; automatic rebasing is outside the MVP.
 
 ### Schedule management
 
@@ -110,7 +111,7 @@ The Schedule workspace lists normal versions, staged imports, and Special Schedu
 
 Activation is a two-step server-authoritative operation when one earlier open-ended predecessor exists. A preview returns that predecessor and the proposed day-before Effective To date. Activation requires an explicit confirmation flag, recomputes topology, and batches predecessor closure, version/entry creation, and import activation. Any finite or otherwise ambiguous overlap is rejected with the conflicting version's name and range; the system does not merge arbitrary ranges.
 
-Effective-date and name edits validate the complete active topology and use an atomic guarded update. They never update `daily_sub_plans.schedule_version_id` or pinned Special Schedule references. Unreferenced Schedule Versions may be hard-deleted with entries and linked import staging/provenance; referenced versions may only be archived through the normal UI. Staff and Rooms remain independent stable identities. Staged-import deletion cascades only through staging tables.
+Effective-date and name edits validate the complete active topology and use an atomic guarded update. They never update pinned Daily Sub Plan references. Unreferenced Schedule Versions or Special Schedules may be hard-deleted with entries and linked import staging/provenance; referenced schedules may only be archived through the normal UI. A referenced Special Schedule's date is immutable, though its name may be corrected. Staff and Rooms remain independent stable identities. Staged-import deletion cascades only through staging tables.
 
 ## Core persistence model
 
@@ -121,7 +122,7 @@ The logical entities from the MVP map to these responsibilities:
 - **ScheduleVersions / ScheduleEntries**: activated, effective-dated normal schedules and their timed blocks.
 - **SpecialSchedules / SpecialScheduleEntries**: one-date overrides and their timed blocks.
 - **Absences**: staff plus inclusive date range and optional time bounds for a single-date partial absence.
-- **DailySubPlans**: date, selected A/B designation, pinned schedule references, Draft/Finalized status, and audit fields.
+- **DailySubPlans**: date, selected A/B designation, exactly one pinned normal-or-Special schedule reference, Draft/Finalized status, and audit fields.
 - **DefaultSubPlans / DefaultSubPlanActions**: versioned structured preferred actions for an absent staff member, optionally day-specific and ordered in time.
 - **Assignments**: one affected responsibility, its source absence, time, type, default reference, resolution type/status, and conflict explanation/audit data.
 - **AssignmentSegments**: timed staff coverage segments for split resolution.
@@ -177,7 +178,7 @@ The `.xlsx` pipeline has explicit stages:
 
 1. **Receive**: validate extension/MIME, size, workbook safety limits, and required metadata such as effective dates or special date.
 2. **Parse**: use the school-specific adapter to create normalized candidate staff, rooms, A/B applicability, and timed blocks.
-3. **Stage**: persist the import and parsed candidate records separately from activated schedules.
+3. **Stage**: persist the explicit `normal` or `special` import kind, its appropriate date metadata, and parsed candidate records separately from activated schedules.
 4. **Validate**: report recognized staff/rooms/A-B structure, malformed or uninterpretable cells/ranges, conflicts, unmapped names, and stale Default Sub Plan references.
 5. **Map**: let administrators link imported display values to persistent Staff/Room records or intentionally create new records.
 6. **Review**: present warnings and blocking errors. Parsing never implies activation.
@@ -302,8 +303,9 @@ The August 2026 vertical-slice pass adds these concrete decisions:
 - Workload is derived from direct and split coverage over each historical plan's pinned schedule. Only overlaps with the candidate's PLAN blocks contribute Plan Period Equivalents; Admin and School Sub coverage contribute zero. Threshold and calendar-window length come from `application_settings`.
 - Resolution writes use atomic batches where child segments are replaced. Split segments require exact, gap-free parent coverage but retain arbitrary valid times; the client presents the configured snap interval. Conceptual redistribution/combine/switch/move-room data uses validated action-specific JSON and never introduces a student model.
 - Generated messages are immutable regeneration versions with independently editable text. Editing updates only the latest message draft. Reopening retains the most recent finalization actor/time.
-- An active date-specific Special Schedule takes precedence and is pinned while the normal version remains pinned for context; normal resolution resumes on the following date. Full Special Schedule editing remains deferred.
-- The schedule-management pass promotes Schedule to a timeline/version workspace, exposes Special Schedules and staged imports, and moves import configuration behind an explicit action. The Worker owns activation previews, overlap explanations, guarded effective-date edits, reference-aware deletion, and archival. Special Schedules are visible with date, status, provenance, and usage context; a full Special Schedule editor remains deferred.
+- Migration `0005_exclusive_schedule_sources.sql` rebuilds `daily_sub_plans` with nullable foreign keys plus an exclusive-or check. Legacy rows containing both references become Special-only because the Special Schedule was already authoritative; plan IDs, status/finalization/audit fields, Assignments, segments, and generated messages are copied through the rebuild. The same migration gives staging an explicit `normal | special` kind, a persisted schedule name, kind-appropriate date metadata, and mutually exclusive activated references.
+- An active date-specific Special Schedule takes precedence and is pinned without a normal version; normal resolution resumes on dates without an active Special Schedule. A Special-only plan has `expectedDayType: null`, while its selected A/B value still filters `A`, `B`, and `ALL` entries.
+- The Schedule workspace provides distinct Import Schedule and Add Special Schedule actions over the same parser, staging, identity mapping, and normalized-entry foundation. Unused Special Schedules allow name/date correction and deletion. Once referenced, their date is immutable and they may be archived but not hard-deleted; archived pinned plans continue to load.
 - Plan responses derive an informational warning for each absence that generates no Needs Sub Assignments on the pinned schedule. The client distinguishes this true zero-Assignment state from filters hiding existing Assignments. A plan with a Special Schedule also returns its name so the pinned one-day override is explicit in the header.
 
 ## When this document changes

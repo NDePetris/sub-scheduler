@@ -286,7 +286,9 @@ An administrator may designate a **Special Schedule** for a particular calendar 
 A Special Schedule:
 
 - applies only to that one date;
-- overrides the otherwise applicable effective-dated normal schedule for that date;
+- is a complete, authoritative one-day schedule;
+- takes precedence over the otherwise applicable effective-dated normal schedule for that date;
+- is sufficient even when no normal Schedule Version covers that date;
 - does not change the Effective From or Effective To dates of the normal schedule;
 - does not become the new default schedule.
 
@@ -1265,7 +1267,7 @@ It does not alter the Effective From / Effective To dates of any normal Schedule
 - id
 - date
 - day_type
-- schedule_version_id
+- schedule_version_id nullable
 - special_schedule_id nullable
 - status
 - created_by
@@ -1273,9 +1275,7 @@ It does not alter the Effective From / Effective To dates of any normal Schedule
 - updated_at
 - finalized_at
 
-If `special_schedule_id` is populated, that schedule takes precedence for that Daily Sub Plan.
-
-Otherwise, the appropriate effective-dated `schedule_version_id` is used.
+Exactly one of `schedule_version_id` or `special_schedule_id` is populated. An active Special Schedule is resolved first and is pinned alone; otherwise the appropriate effective-dated normal Schedule Version is pinned alone. If neither source exists, the Daily Sub Plan is not created.
 
 The Daily Sub Plan should retain the exact schedule reference used when the plan was created so historical plans do not change if schedule effective dates are later edited.
 

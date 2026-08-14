@@ -14,6 +14,7 @@ export default defineConfig({
       return {
         wrangler: { configPath: path.join(projectRoot, 'wrangler.jsonc') },
         miniflare: {
+          d1Databases: ['UPGRADE_DB'],
           bindings: {
             APP_ENV: 'test',
             DEV_USER_EMAIL: 'admin@sub-planning.test',
