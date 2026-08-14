@@ -127,6 +127,13 @@ describe('MVP planning domain', () => {
         currentBurden: 0,
       },
       {
+        id: 'school-conflict',
+        displayName: 'Unavailable School Sub',
+        availability: 'school_sub',
+        currentBurden: 0,
+        conflicts: ['Absent'],
+      },
+      {
         id: 'plan-low',
         displayName: 'Plan Low',
         availability: 'plan',
@@ -151,6 +158,7 @@ describe('MVP planning domain', () => {
       'plan-low',
       'plan-high',
       'admin',
+      'school-conflict',
       'manual',
     ]);
   });

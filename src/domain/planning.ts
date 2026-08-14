@@ -210,6 +210,7 @@ export interface RankedCandidate {
   readonly displayName: string;
   readonly availability: CandidateAvailability;
   readonly currentBurden: number;
+  readonly conflicts?: readonly unknown[];
 }
 
 export function rankCandidates<T extends RankedCandidate>(
@@ -224,6 +225,8 @@ export function rankCandidates<T extends RankedCandidate>(
   };
   return [...candidates].sort(
     (left, right) =>
+      Number(right.availability !== 'manual' && !right.conflicts?.length) -
+        Number(left.availability !== 'manual' && !left.conflicts?.length) ||
       tier[left.availability] - tier[right.availability] ||
       left.currentBurden - right.currentBurden ||
       left.displayName.localeCompare(right.displayName) ||

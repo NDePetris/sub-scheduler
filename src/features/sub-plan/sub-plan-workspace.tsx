@@ -7,25 +7,23 @@ import {
   Clipboard,
   RefreshCw,
   Search,
-  Split,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { shiftSchoolDate } from '@/domain/planning';
+import { ResolveSubNeedDrawer } from '@/features/sub-plan/resolve-sub-need-drawer';
+import { formatRoomLabel } from '@/features/sub-plan/sub-plan-presentation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   addAbsence,
   editMessage,
   ensurePlan,
-  getCandidates,
   listStaff,
   regenerateMessage,
-  resolveAssignment,
   setPlanStatus,
   type BootstrapData,
-  type CandidatePreview,
   type PlanAssignment,
   type PlanDetail,
   type StaffData,
@@ -345,7 +343,7 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
         />
       )}
       {selectedAssignment && detail && (
-        <ResolveDrawer
+        <ResolveSubNeedDrawer
           assignment={selectedAssignment}
           detail={detail}
           staff={staff}
@@ -421,14 +419,7 @@ function AssignmentTable({
             </td>
             <td className="truncate px-3 py-3">{assignment.description}</td>
             <td className="px-3 py-3">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span>{assignmentLabel(assignment)}</span>
-                {assignment.isDefault && (
-                  <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-                    Default
-                  </Badge>
-                )}
-              </div>
+              <AssignedCell assignment={assignment} />
             </td>
             <td className="px-3 py-3">
               <StatusBadge status={assignment.status} />
@@ -437,379 +428,6 @@ function AssignmentTable({
         ))}
       </tbody>
     </table>
-  );
-}
-
-function ResolveDrawer({
-  assignment,
-  detail,
-  staff,
-  onClose,
-  onChange,
-}: {
-  readonly assignment: PlanAssignment;
-  readonly detail: PlanDetail;
-  readonly staff: readonly StaffData[];
-  readonly onClose: () => void;
-  readonly onChange: (detail: PlanDetail) => void;
-}) {
-  const [candidates, setCandidates] = useState<CandidatePreview[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [splitOpen, setSplitOpen] = useState(false);
-  const [firstStaff, setFirstStaff] = useState('');
-  const [secondStaff, setSecondStaff] = useState('');
-  const [splitTime, setSplitTime] = useState(() =>
-    addMinutes(assignment.startTime, 40),
-  );
-
-  useEffect(() => {
-    void getCandidates(assignment.id)
-      .then((values) => {
-        setCandidates(values);
-        setFirstStaff(values[0]?.id ?? '');
-        setSecondStaff(values[1]?.id ?? values[0]?.id ?? '');
-      })
-      .catch((cause: unknown) => setError(errorMessage(cause)));
-  }, [assignment.id]);
-
-  async function act(input: Record<string, unknown>) {
-    setBusy(true);
-    setError(null);
-    try {
-      onChange(await resolveAssignment(assignment.id, input));
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-40 bg-black/20"
-      role="presentation"
-      onMouseDown={onClose}
-    >
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="resolve-title"
-        onMouseDown={(event) => event.stopPropagation()}
-        className="border-border absolute inset-y-0 right-0 w-[560px] overflow-y-auto border-l bg-white shadow-xl"
-      >
-        <div className="border-border sticky top-0 z-10 flex items-center justify-between border-b bg-white px-5 py-4">
-          <div>
-            <h2 id="resolve-title" className="font-bold">
-              Resolve Sub Need
-            </h2>
-            <p className="text-muted-foreground text-xs">
-              {detail.plan.date} · {detail.plan.dayType} Day
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            <X className="size-4" />
-          </Button>
-        </div>
-        <div className="space-y-5 p-5">
-          {error && <ErrorBanner message={error} />}
-          <section className="bg-muted grid grid-cols-2 gap-x-5 gap-y-3 rounded-lg p-4 text-sm">
-            <Data
-              label="Time"
-              value={`${assignment.startTime}–${assignment.endTime}`}
-            />
-            <Data
-              label="Absent Teacher"
-              value={assignment.absentStaff.displayName}
-            />
-            <Data
-              label="Type"
-              value={assignment.responsibilityType.replace('_', ' ')}
-            />
-            <Data label="Room" value={assignment.room ?? '—'} />
-            <div className="col-span-2">
-              <Data
-                label="Class / Responsibility"
-                value={assignment.description}
-              />
-            </div>
-          </section>
-
-          <section>
-            <h3 className="text-muted-foreground text-xs font-bold tracking-wide uppercase">
-              Default Sub Plan
-            </h3>
-            <div className="border-border mt-2 rounded-md border p-3 text-sm">
-              {assignment.defaultAction ? (
-                <>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-semibold">
-                      {defaultActionLabel(assignment)}
-                    </span>
-                    <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-                      Default
-                    </Badge>
-                  </div>
-                  {assignment.conflictExplanation && (
-                    <p className="text-danger-dark mt-2 flex gap-1.5 text-xs">
-                      <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{' '}
-                      {assignment.conflictExplanation}
-                    </p>
-                  )}
-                </>
-              ) : (
-                <span className="text-muted-foreground">
-                  No matching structured default.
-                </span>
-              )}
-            </div>
-          </section>
-
-          <section>
-            <h3 className="text-muted-foreground text-xs font-bold tracking-wide uppercase">
-              Recommended Candidates
-            </h3>
-            <div className="border-border mt-2 divide-y overflow-hidden rounded-md border">
-              {candidates.map((candidate) => (
-                <div key={candidate.id} className="p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="font-semibold">
-                          {candidate.displayName}
-                        </span>
-                        <Badge>{candidate.availabilitySource}</Badge>
-                        {candidate.availability === 'default' && (
-                          <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-                            Default
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-muted-foreground mt-1 text-xs">
-                        Current {candidate.currentBurden.toFixed(2)} · Proposed
-                        +{candidate.proposedBurden.toFixed(2)} · Projected{' '}
-                        {candidate.projectedBurden.toFixed(2)}
-                      </p>
-                      {[...candidate.conflicts, ...candidate.warnings].map(
-                        (warning) => (
-                          <p
-                            key={warning}
-                            className={cn(
-                              'mt-1 text-xs',
-                              candidate.conflicts.includes(warning)
-                                ? 'text-danger-dark'
-                                : 'text-warning-dark',
-                            )}
-                          >
-                            ⚠ {warning}
-                          </p>
-                        ),
-                      )}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant={
-                        candidate.conflicts.length ? 'secondary' : 'primary'
-                      }
-                      disabled={busy}
-                      onClick={() => {
-                        const override = candidate.conflicts.length > 0;
-                        if (
-                          !override ||
-                          window.confirm(
-                            `${candidate.conflicts.join(' ')} Assign Anyway?`,
-                          )
-                        ) {
-                          void act({
-                            action: 'assign',
-                            staffId: candidate.id,
-                            assignAnyway: override,
-                          });
-                        }
-                      }}
-                    >
-                      {candidate.conflicts.length ? 'Assign Anyway' : 'Assign'}
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="space-y-2">
-            <h3 className="text-muted-foreground text-xs font-bold tracking-wide uppercase">
-              Other Options
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setSplitOpen((value) => !value)}
-              >
-                <Split className="size-3.5" /> Split Assignment
-              </Button>
-              {assignment.responsibilityType === 'instruction' && (
-                <>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() =>
-                      void act({
-                        action: 'structured',
-                        resolutionType: 'redistribution',
-                        details: {
-                          decision: 'Conceptual class redistribution',
-                        },
-                      })
-                    }
-                  >
-                    Redistribute Class
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() =>
-                      void act({
-                        action: 'structured',
-                        resolutionType: 'combine_class',
-                        details: { decision: 'Combine class' },
-                      })
-                    }
-                  >
-                    Combine Class
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() =>
-                      void act({
-                        action: 'structured',
-                        resolutionType: 'move_room',
-                        details: {
-                          decision: 'Move room; room to be included in message',
-                        },
-                      })
-                    }
-                  >
-                    Move Room
-                  </Button>
-                </>
-              )}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  const needsAck =
-                    assignment.responsibilityType === 'instruction';
-                  if (
-                    !needsAck ||
-                    window.confirm(
-                      'This is instructional coverage. Leave Uncovered anyway?',
-                    )
-                  ) {
-                    void act({
-                      action: 'leave_uncovered',
-                      acknowledged: needsAck,
-                    });
-                  }
-                }}
-              >
-                Leave Uncovered
-              </Button>
-            </div>
-            {splitOpen && (
-              <div className="border-border mt-3 space-y-3 rounded-md border p-3">
-                <p className="text-muted-foreground text-xs">
-                  Segments must meet exactly; the suggested split follows the{' '}
-                  {detail.settings.splitSnapMinutes}-minute editing convention.
-                </p>
-                <div className="grid grid-cols-[1fr_120px_1fr] items-end gap-2">
-                  <Labeled label={`${assignment.startTime} to split`}>
-                    <select
-                      value={firstStaff}
-                      onChange={(event) => setFirstStaff(event.target.value)}
-                      className="field"
-                    >
-                      {staff
-                        .filter(
-                          (person) => person.id !== assignment.absentStaff.id,
-                        )
-                        .map((person) => (
-                          <option key={person.id} value={person.id}>
-                            {person.displayName}
-                          </option>
-                        ))}
-                    </select>
-                  </Labeled>
-                  <Labeled label="Split time">
-                    <input
-                      type="time"
-                      step={detail.settings.splitSnapMinutes * 60}
-                      min={assignment.startTime}
-                      max={assignment.endTime}
-                      value={splitTime}
-                      onChange={(event) => setSplitTime(event.target.value)}
-                      className="field"
-                    />
-                  </Labeled>
-                  <Labeled label={`Split to ${assignment.endTime}`}>
-                    <select
-                      value={secondStaff}
-                      onChange={(event) => setSecondStaff(event.target.value)}
-                      className="field"
-                    >
-                      {staff
-                        .filter(
-                          (person) => person.id !== assignment.absentStaff.id,
-                        )
-                        .map((person) => (
-                          <option key={person.id} value={person.id}>
-                            {person.displayName}
-                          </option>
-                        ))}
-                    </select>
-                  </Labeled>
-                </div>
-                <Button
-                  size="sm"
-                  disabled={
-                    !firstStaff ||
-                    !secondStaff ||
-                    splitTime <= assignment.startTime ||
-                    splitTime >= assignment.endTime
-                  }
-                  onClick={() =>
-                    void act({
-                      action: 'split',
-                      segments: [
-                        {
-                          staffId: firstStaff,
-                          startTime: assignment.startTime,
-                          endTime: splitTime,
-                        },
-                        {
-                          staffId: secondStaff,
-                          startTime: splitTime,
-                          endTime: assignment.endTime,
-                        },
-                      ],
-                      assignAnyway: true,
-                    })
-                  }
-                >
-                  Save Split
-                </Button>
-              </div>
-            )}
-          </section>
-        </div>
-      </aside>
-    </div>
   );
 }
 
@@ -1111,6 +729,7 @@ function FullSchedule({ detail }: { readonly detail: PlanDetail }) {
                     ((minutes(entry.endTime) - minutes(entry.startTime)) /
                       480) *
                     100;
+                  const roomLabel = formatRoomLabel(entry.room);
                   return (
                     <div
                       key={entry.id}
@@ -1122,7 +741,9 @@ function FullSchedule({ detail }: { readonly detail: PlanDetail }) {
                       style={{ left: `${left}%`, width: `${width}%` }}
                     >
                       {entry.description}
-                      <span className="block opacity-70">{entry.room}</span>
+                      {roomLabel && (
+                        <span className="block opacity-70">{roomLabel}</span>
+                      )}
                     </div>
                   );
                 })}
@@ -1284,21 +905,6 @@ function Labeled({
   );
 }
 
-function Data({
-  label,
-  value,
-}: {
-  readonly label: string;
-  readonly value: string;
-}) {
-  return (
-    <div>
-      <dt className="text-muted-foreground text-xs font-semibold">{label}</dt>
-      <dd className="mt-0.5 capitalize">{value}</dd>
-    </div>
-  );
-}
-
 function assignmentLabel(assignment: PlanAssignment): string {
   if (assignment.assignedStaff) return assignment.assignedStaff.displayName;
   if (assignment.segments.length)
@@ -1310,12 +916,38 @@ function assignmentLabel(assignment: PlanAssignment): string {
   return '—';
 }
 
-function defaultActionLabel(assignment: PlanAssignment): string {
-  const action = assignment.defaultAction;
-  if (!action) return 'No default';
-  if (action.staffName)
-    return `${action.staffName} · ${action.actionType.replaceAll('_', ' ')}`;
-  return action.actionType.replaceAll('_', ' ');
+function AssignedCell({ assignment }: { readonly assignment: PlanAssignment }) {
+  if (assignment.segments.length > 0) {
+    return (
+      <div className="space-y-0.5 text-xs">
+        {assignment.segments.map((segment) => (
+          <div key={segment.id}>
+            <span className="font-semibold">{segment.staffName}</span>{' '}
+            <span className="text-muted-foreground font-mono">
+              {segment.startTime}–{segment.endTime}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div className="truncate">{assignmentLabel(assignment)}</div>
+      {(assignment.resolutionSource || assignment.isDefault) && (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {assignment.resolutionSource && (
+            <Badge>{assignment.resolutionSource}</Badge>
+          )}
+          {assignment.isDefault && (
+            <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
+              Default
+            </Badge>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function categoryClass(category: string): string {
@@ -1347,11 +979,6 @@ function schoolToday(timezone: string): string {
 
 function minutes(value: string): number {
   return Number(value.slice(0, 2)) * 60 + Number(value.slice(3, 5));
-}
-
-function addMinutes(value: string, amount: number): string {
-  const result = minutes(value) + amount;
-  return `${String(Math.floor(result / 60)).padStart(2, '0')}:${String(result % 60).padStart(2, '0')}`;
 }
 
 function errorMessage(cause: unknown): string {

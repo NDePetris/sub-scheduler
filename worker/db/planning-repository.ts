@@ -95,6 +95,7 @@ interface AssignmentRow {
   default_details_json: string | null;
   assigned_staff_id: string | null;
   assigned_staff_name: string | null;
+  assigned_is_school_sub: number | null;
   resolution_type: string | null;
   resolution_details_json: string | null;
   status: 'unresolved' | 'assigned' | 'intentionally_uncovered';
@@ -111,6 +112,7 @@ interface SegmentRow {
   end_time: string;
   staff_id: string;
   staff_name: string;
+  staff_is_school_sub: number;
   sequence: number;
 }
 
@@ -136,8 +138,20 @@ interface MessageRow {
   generated_at: string;
 }
 
-interface CoverageRow {
-  daily_sub_plan_id: string;
+interface WorkloadCoverageRow {
+  staff_id: string;
+  day_type: DayType;
+  schedule_version_id: string | null;
+  special_schedule_id: string | null;
+  start_time: string;
+  end_time: string;
+}
+
+interface WorkloadPlanEntryRow {
+  source_type: 'normal' | 'special';
+  source_id: string;
+  staff_id: string;
+  day_type: 'A' | 'B' | 'ALL';
   start_time: string;
   end_time: string;
 }
@@ -167,6 +181,13 @@ interface CandidatePreview {
   readonly projectedBurden: number;
   readonly threshold: number;
   readonly windowDays: number;
+}
+
+interface CandidateEvaluationContext {
+  readonly entries: readonly EntryRow[];
+  readonly absences: readonly AbsenceRow[];
+  readonly assignments: readonly AssignmentRow[];
+  readonly segments: readonly SegmentRow[];
 }
 
 export class PlanningRepository {
@@ -255,6 +276,7 @@ export class PlanningRepository {
             displayName: assignment.assigned_staff_name ?? '',
           }
         : null,
+      resolutionSource: resolutionSource(assignment, schedule, plan.day_type),
       resolutionType: assignment.resolution_type,
       resolutionDetails: parseJson(assignment.resolution_details_json),
       status: assignment.status,
@@ -281,31 +303,27 @@ export class PlanningRepository {
       (assignment) => assignment.status !== 'unresolved',
     ).length;
     const assignedStaffIds = new Set([
-      ...assignmentDtos.flatMap((assignment) =>
-        assignment.assignedStaff ? [assignment.assignedStaff.id] : [],
+      ...assignments.flatMap((assignment) =>
+        assignment.assigned_staff_id && assignment.assigned_is_school_sub !== 1
+          ? [assignment.assigned_staff_id]
+          : [],
       ),
-      ...assignmentDtos.flatMap((assignment) =>
-        assignment.segments.map((segment) => segment.staffId),
+      ...segments.flatMap((segment) =>
+        segment.staff_is_school_sub !== 1 ? [segment.staff_id] : [],
       ),
     ]);
-    let workloadWarnings = 0;
-    for (const staffId of assignedStaffIds) {
-      const person = await this.db
-        .prepare(`SELECT is_school_sub FROM staff WHERE id = ?`)
-        .bind(staffId)
-        .first<{ is_school_sub: number }>();
-      if (
-        person?.is_school_sub !== 1 &&
-        (await this.currentBurden(
-          staffId,
-          plan.date,
-          settings.workload_window_days,
-          '',
-        )) >= settings.workload_warning_threshold
-      ) {
-        workloadWarnings += 1;
-      }
-    }
+    const burdens =
+      assignedStaffIds.size > 0
+        ? await this.burdensForWindow(
+            plan.date,
+            settings.workload_window_days,
+            '',
+          )
+        : new Map<string, number>();
+    const workloadWarnings = [...assignedStaffIds].filter(
+      (staffId) =>
+        (burdens.get(staffId) ?? 0) >= settings.workload_warning_threshold,
+    ).length;
     return {
       plan: {
         id: plan.id,
@@ -585,38 +603,54 @@ export class PlanningRepository {
   async candidates(
     assignmentId: string,
   ): Promise<{ assignmentId: string; candidates: CandidatePreview[] }> {
-    const assignment = await this.assignmentById(assignmentId);
+    const [assignment, settings] = await Promise.all([
+      this.assignmentById(assignmentId),
+      this.settings(),
+    ]);
     const plan = await this.planById(assignment.daily_sub_plan_id);
-    const settings = await this.settings();
-    const staff = await this.db
-      .prepare(
-        `SELECT id, display_name, role, is_school_sub FROM staff
-          WHERE is_active = 1 AND can_sub = 1 AND id <> ?
-          ORDER BY display_name, id`,
-      )
-      .bind(assignment.absent_staff_id)
-      .all<StaffRow>();
-    const previews: CandidatePreview[] = [];
-    for (const person of staff.results) {
-      const check = await this.candidateCheck(
+    const [staff, entries, absences, assignments, burdens] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT id, display_name, role, is_school_sub FROM staff
+            WHERE is_active = 1 AND can_sub = 1 AND id <> ?
+            ORDER BY display_name, id`,
+        )
+        .bind(assignment.absent_staff_id)
+        .all<StaffRow>(),
+      this.entriesForPlan(plan),
+      this.absencesForDate(plan.date),
+      this.assignmentsForPlan(plan.id),
+      this.burdensForWindow(
+        plan.date,
+        settings.workload_window_days,
+        assignment.id,
+      ),
+    ]);
+    const segments = await this.segmentsForAssignments(
+      assignments.map((item) => item.id),
+    );
+    const context: CandidateEvaluationContext = {
+      entries,
+      absences,
+      assignments,
+      segments,
+    };
+    const previews = staff.results.map((person): CandidatePreview => {
+      const check = evaluateCandidate(
         plan,
         person,
         assignment.start_time,
         assignment.end_time,
         assignment.id,
+        context,
       );
       const currentBurden = person.is_school_sub
         ? 0
-        : await this.currentBurden(
-            person.id,
-            plan.date,
-            settings.workload_window_days,
-            assignment.id,
-          );
+        : (burdens.get(person.id) ?? 0);
       const proposedBurden = person.is_school_sub
         ? 0
         : calculatePlanPeriodsLost(
-            (await this.entriesForPlan(plan))
+            entries
               .filter(
                 (entry) =>
                   entry.staff_id === person.id &&
@@ -642,7 +676,7 @@ export class PlanningRepository {
       const isValidDefault =
         assignment.default_staff_id === person.id &&
         check.conflicts.length === 0;
-      previews.push({
+      return {
         id: person.id,
         displayName: person.display_name,
         role: person.role,
@@ -663,8 +697,8 @@ export class PlanningRepository {
         projectedBurden,
         threshold: settings.workload_warning_threshold,
         windowDays: settings.workload_window_days,
-      });
-    }
+      };
+    });
     return {
       assignmentId,
       candidates: rankCandidates(previews),
@@ -1137,158 +1171,148 @@ export class PlanningRepository {
     endTime: string,
     excludeAssignmentId: string | null,
   ): Promise<CandidateCheck> {
-    const conflicts: string[] = [];
-    const warnings: string[] = [];
-    const absence = await this.db
-      .prepare(
-        `SELECT id, start_time, end_time FROM absences
-          WHERE staff_id = ? AND start_date <= ? AND end_date >= ?`,
-      )
-      .bind(staff.id, plan.date, plan.date)
-      .all<{
-        id: string;
-        start_time: string | null;
-        end_time: string | null;
-      }>();
-    if (
-      absence.results.some((item) =>
-        timeRangesOverlap(item.start_time, item.end_time, startTime, endTime),
-      )
-    ) {
-      conflicts.push('This staff member is absent during the Assignment.');
-    }
-
-    const directConflict = await this.db
-      .prepare(
-        `SELECT COUNT(*) AS count
-           FROM assignments a
-          WHERE a.daily_sub_plan_id = ? AND a.assigned_staff_id = ?
-            AND a.status = 'assigned' AND a.id <> COALESCE(?, '')
-            AND a.start_time < ? AND ? < a.end_time`,
-      )
-      .bind(plan.id, staff.id, excludeAssignmentId, endTime, startTime)
-      .first<CountRow>();
-    const segmentConflict = await this.db
-      .prepare(
-        `SELECT COUNT(*) AS count
-           FROM assignment_segments s
-           JOIN assignments a ON a.id = s.assignment_id
-          WHERE a.daily_sub_plan_id = ? AND s.staff_id = ?
-            AND a.id <> COALESCE(?, '')
-            AND s.start_time < ? AND ? < s.end_time`,
-      )
-      .bind(plan.id, staff.id, excludeAssignmentId, endTime, startTime)
-      .first<CountRow>();
-    if ((directConflict?.count ?? 0) > 0 || (segmentConflict?.count ?? 0) > 0) {
-      conflicts.push('This staff member already has overlapping sub coverage.');
-    }
-
-    const entries = (await this.entriesForPlan(plan)).filter(
-      (entry) =>
-        entry.staff_id === staff.id &&
-        (entry.day_type === 'ALL' || entry.day_type === plan.day_type) &&
-        entry.start_time < endTime &&
-        startTime < entry.end_time,
+    const [entries, absences, assignments] = await Promise.all([
+      this.entriesForPlan(plan),
+      this.absencesForDate(plan.date),
+      this.assignmentsForPlan(plan.id),
+    ]);
+    const segments = await this.segmentsForAssignments(
+      assignments.map((assignment) => assignment.id),
     );
-    if (staff.is_school_sub === 1) {
-      const configuredAvailability = coversInterval(
-        entries.filter((entry) => entry.activity_type === 'other'),
-        startTime,
-        endTime,
-      );
-      if (configuredAvailability) {
-        return {
-          source: 'School Sub',
-          sourceType: 'school_sub',
-          conflicts,
-          warnings,
-        };
-      }
-      warnings.push(
-        'No configured School Sub availability covers the full Assignment.',
-      );
-      return { source: 'Manual', sourceType: 'manual', conflicts, warnings };
-    }
-    const blocking = entries.filter(
-      (entry) =>
-        entry.activity_type !== 'plan' && entry.activity_type !== 'admin',
-    );
-    if (blocking.length > 0) {
-      conflicts.push(
-        `Scheduled conflict: ${blocking.map((entry) => entry.description).join(', ')}.`,
-      );
-    }
-    const planCoverage = coversInterval(
-      entries.filter((entry) => entry.activity_type === 'plan'),
+    return evaluateCandidate(
+      plan,
+      staff,
       startTime,
       endTime,
+      excludeAssignmentId,
+      {
+        entries,
+        absences,
+        assignments,
+        segments,
+      },
     );
-    if (planCoverage)
-      return { source: 'Plan Period', sourceType: 'plan', conflicts, warnings };
-    const adminCoverage = coversInterval(
-      entries.filter((entry) => entry.activity_type === 'admin'),
-      startTime,
-      endTime,
-    );
-    if (adminCoverage)
-      return { source: 'Admin', sourceType: 'admin', conflicts, warnings };
-    warnings.push(
-      'No automatic PLAN/Admin availability covers the full Assignment.',
-    );
-    return { source: 'Manual', sourceType: 'manual', conflicts, warnings };
   }
 
-  private async currentBurden(
-    staffId: string,
+  private async burdensForWindow(
     date: string,
     windowDays: number,
     excludeAssignmentId: string,
-  ): Promise<number> {
+  ): Promise<Map<string, number>> {
     const startDate = shiftSchoolDate(date, -(windowDays - 1));
     const coverage = await this.db
       .prepare(
-        `SELECT a.daily_sub_plan_id, a.start_time, a.end_time
+        `SELECT a.assigned_staff_id AS staff_id, p.day_type,
+                p.schedule_version_id, p.special_schedule_id,
+                a.start_time, a.end_time
            FROM assignments a
            JOIN daily_sub_plans p ON p.id = a.daily_sub_plan_id
-          WHERE a.assigned_staff_id = ? AND a.status = 'assigned'
+          WHERE a.assigned_staff_id IS NOT NULL AND a.status = 'assigned'
             AND a.id <> ? AND p.date BETWEEN ? AND ?
           UNION ALL
-         SELECT a.daily_sub_plan_id, s.start_time, s.end_time
+         SELECT s.staff_id, p.day_type, p.schedule_version_id,
+                p.special_schedule_id, s.start_time, s.end_time
            FROM assignment_segments s
            JOIN assignments a ON a.id = s.assignment_id
            JOIN daily_sub_plans p ON p.id = a.daily_sub_plan_id
-          WHERE s.staff_id = ? AND a.id <> ? AND p.date BETWEEN ? AND ?`,
+          WHERE a.status = 'assigned' AND a.id <> ?
+            AND p.date BETWEEN ? AND ?`,
       )
       .bind(
-        staffId,
         excludeAssignmentId,
         startDate,
         date,
-        staffId,
         excludeAssignmentId,
         startDate,
         date,
       )
-      .all<CoverageRow>();
-    let total = 0;
+      .all<WorkloadCoverageRow>();
+    if (coverage.results.length === 0) return new Map();
+
+    const normalSourceIds = new Set<string>();
+    const specialSourceIds = new Set<string>();
     for (const item of coverage.results) {
-      const plan = await this.planById(item.daily_sub_plan_id);
-      const blocks = (await this.entriesForPlan(plan))
+      if (item.schedule_version_id)
+        normalSourceIds.add(item.schedule_version_id);
+      if (item.special_schedule_id)
+        specialSourceIds.add(item.special_schedule_id);
+    }
+    const planEntries = await this.planEntriesForSources(
+      [...normalSourceIds],
+      [...specialSourceIds],
+    );
+    const entriesByCandidateAndSource = new Map<
+      string,
+      WorkloadPlanEntryRow[]
+    >();
+    for (const entry of planEntries) {
+      const key = `${entry.staff_id}:${entry.source_type}:${entry.source_id}`;
+      const list = entriesByCandidateAndSource.get(key) ?? [];
+      list.push(entry);
+      entriesByCandidateAndSource.set(key, list);
+    }
+
+    const burdens = new Map<string, number>();
+    for (const item of coverage.results) {
+      const sourceType = item.special_schedule_id ? 'special' : 'normal';
+      const sourceId = item.special_schedule_id ?? item.schedule_version_id;
+      if (!sourceId) continue;
+      const blocks = (
+        entriesByCandidateAndSource.get(
+          `${item.staff_id}:${sourceType}:${sourceId}`,
+        ) ?? []
+      )
         .filter(
           (entry) =>
-            entry.staff_id === staffId &&
-            entry.activity_type === 'plan' &&
-            (entry.day_type === 'ALL' || entry.day_type === plan.day_type),
+            entry.day_type === 'ALL' || entry.day_type === item.day_type,
         )
         .map((entry) => ({
           startTime: entry.start_time,
           endTime: entry.end_time,
         }));
-      total += calculatePlanPeriodsLost(blocks, [
+      const burden = calculatePlanPeriodsLost(blocks, [
         { startTime: item.start_time, endTime: item.end_time },
       ]);
+      burdens.set(
+        item.staff_id,
+        round((burdens.get(item.staff_id) ?? 0) + burden),
+      );
     }
-    return round(total);
+    return burdens;
+  }
+
+  private async planEntriesForSources(
+    normalSourceIds: readonly string[],
+    specialSourceIds: readonly string[],
+  ): Promise<WorkloadPlanEntryRow[]> {
+    const queries: string[] = [];
+    const bindings: string[] = [];
+    if (normalSourceIds.length > 0) {
+      queries.push(
+        `SELECT 'normal' AS source_type, schedule_version_id AS source_id,
+                staff_id, day_type, start_time, end_time
+           FROM schedule_entries
+          WHERE activity_type = 'plan'
+            AND schedule_version_id IN (${normalSourceIds.map(() => '?').join(',')})`,
+      );
+      bindings.push(...normalSourceIds);
+    }
+    if (specialSourceIds.length > 0) {
+      queries.push(
+        `SELECT 'special' AS source_type, special_schedule_id AS source_id,
+                staff_id, day_type, start_time, end_time
+           FROM special_schedule_entries
+          WHERE activity_type = 'plan'
+            AND special_schedule_id IN (${specialSourceIds.map(() => '?').join(',')})`,
+      );
+      bindings.push(...specialSourceIds);
+    }
+    if (queries.length === 0) return [];
+    const result = await this.db
+      .prepare(queries.join(' UNION ALL '))
+      .bind(...bindings)
+      .all<WorkloadPlanEntryRow>();
+    return result.results;
   }
 
   private async planSeed(
@@ -1486,6 +1510,7 @@ export class PlanningRepository {
                 ds.display_name AS default_staff_name,
                 da.details_json AS default_details_json,
                 a.assigned_staff_id, assigned.display_name AS assigned_staff_name,
+                assigned.is_school_sub AS assigned_is_school_sub,
                 a.resolution_type, a.resolution_details_json, a.status, a.is_default,
                 a.conflict_explanation, absent.id AS absent_staff_id,
                 absent.display_name AS absent_staff_name
@@ -1514,6 +1539,7 @@ export class PlanningRepository {
                 ds.display_name AS default_staff_name,
                 da.details_json AS default_details_json,
                 a.assigned_staff_id, assigned.display_name AS assigned_staff_name,
+                assigned.is_school_sub AS assigned_is_school_sub,
                 a.resolution_type, a.resolution_details_json, a.status, a.is_default,
                 a.conflict_explanation, absent.id AS absent_staff_id,
                 absent.display_name AS absent_staff_name
@@ -1541,7 +1567,8 @@ export class PlanningRepository {
     const result = await this.db
       .prepare(
         `SELECT s.id, s.assignment_id, s.start_time, s.end_time, s.staff_id,
-                st.display_name AS staff_name, s.sequence
+                st.display_name AS staff_name,
+                st.is_school_sub AS staff_is_school_sub, s.sequence
            FROM assignment_segments s JOIN staff st ON st.id = s.staff_id
           WHERE s.assignment_id IN (${placeholders})
           ORDER BY s.assignment_id, s.sequence`,
@@ -1587,6 +1614,151 @@ export class PlanningRepository {
       );
     }
   }
+}
+
+function evaluateCandidate(
+  plan: PlanRow,
+  staff: StaffRow,
+  startTime: string,
+  endTime: string,
+  excludeAssignmentId: string | null,
+  context: CandidateEvaluationContext,
+): CandidateCheck {
+  const conflicts: string[] = [];
+  const warnings: string[] = [];
+  const addConflict = (message: string) => {
+    if (!conflicts.includes(message)) conflicts.push(message);
+  };
+
+  if (
+    context.absences.some(
+      (absence) =>
+        absence.staff_id === staff.id &&
+        timeRangesOverlap(
+          absence.start_time,
+          absence.end_time,
+          startTime,
+          endTime,
+        ),
+    )
+  ) {
+    addConflict(`${staff.display_name} is absent during this Assignment.`);
+  }
+
+  for (const assignment of context.assignments) {
+    if (
+      assignment.id !== excludeAssignmentId &&
+      assignment.status === 'assigned' &&
+      assignment.assigned_staff_id === staff.id &&
+      assignment.start_time < endTime &&
+      startTime < assignment.end_time
+    ) {
+      addConflict(
+        `Overlapping sub coverage: ${assignment.description}, ${assignment.start_time}\u2013${assignment.end_time}.`,
+      );
+    }
+  }
+  const assignmentsById = new Map(
+    context.assignments.map((assignment) => [assignment.id, assignment]),
+  );
+  for (const segment of context.segments) {
+    if (
+      segment.assignment_id !== excludeAssignmentId &&
+      segment.staff_id === staff.id &&
+      segment.start_time < endTime &&
+      startTime < segment.end_time
+    ) {
+      const parent = assignmentsById.get(segment.assignment_id);
+      addConflict(
+        `Overlapping split coverage: ${parent?.description ?? 'another Assignment'}, ${segment.start_time}\u2013${segment.end_time}.`,
+      );
+    }
+  }
+
+  const entries = context.entries.filter(
+    (entry) =>
+      entry.staff_id === staff.id &&
+      (entry.day_type === 'ALL' || entry.day_type === plan.day_type) &&
+      entry.start_time < endTime &&
+      startTime < entry.end_time,
+  );
+  if (staff.is_school_sub === 1) {
+    const configuredAvailability = coversInterval(
+      entries.filter((entry) => entry.activity_type === 'other'),
+      startTime,
+      endTime,
+    );
+    return configuredAvailability
+      ? {
+          source: 'School Sub',
+          sourceType: 'school_sub',
+          conflicts,
+          warnings,
+        }
+      : { source: 'Manual', sourceType: 'manual', conflicts, warnings };
+  }
+
+  for (const entry of entries.filter(
+    (entry) =>
+      entry.activity_type !== 'plan' && entry.activity_type !== 'admin',
+  )) {
+    addConflict(
+      `Scheduled conflict: ${entry.description}, ${entry.start_time}\u2013${entry.end_time}.`,
+    );
+  }
+  if (
+    coversInterval(
+      entries.filter((entry) => entry.activity_type === 'plan'),
+      startTime,
+      endTime,
+    )
+  ) {
+    return { source: 'Plan Period', sourceType: 'plan', conflicts, warnings };
+  }
+  if (
+    coversInterval(
+      entries.filter((entry) => entry.activity_type === 'admin'),
+      startTime,
+      endTime,
+    )
+  ) {
+    return { source: 'Admin', sourceType: 'admin', conflicts, warnings };
+  }
+  return { source: 'Manual', sourceType: 'manual', conflicts, warnings };
+}
+
+function resolutionSource(
+  assignment: AssignmentRow,
+  schedule: readonly EntryRow[],
+  dayType: DayType,
+): 'School Sub' | 'PLAN' | 'Admin' | 'Manual' | 'Override' | null {
+  if (!assignment.assigned_staff_id) return null;
+  if (assignment.resolution_type === 'manual_override') return 'Override';
+  if (assignment.assigned_is_school_sub === 1) return 'School Sub';
+  const entries = schedule.filter(
+    (entry) =>
+      entry.staff_id === assignment.assigned_staff_id &&
+      (entry.day_type === 'ALL' || entry.day_type === dayType) &&
+      entry.start_time < assignment.end_time &&
+      assignment.start_time < entry.end_time,
+  );
+  if (
+    coversInterval(
+      entries.filter((entry) => entry.activity_type === 'plan'),
+      assignment.start_time,
+      assignment.end_time,
+    )
+  )
+    return 'PLAN';
+  if (
+    coversInterval(
+      entries.filter((entry) => entry.activity_type === 'admin'),
+      assignment.start_time,
+      assignment.end_time,
+    )
+  )
+    return 'Admin';
+  return 'Manual';
 }
 
 function responsibilityType(

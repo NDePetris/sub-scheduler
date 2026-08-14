@@ -74,6 +74,8 @@ export interface PlanAssignment {
   readonly room: string | null;
   readonly absentStaff: StaffData;
   readonly assignedStaff: StaffData | null;
+  readonly resolutionSource:
+    'School Sub' | 'PLAN' | 'Admin' | 'Manual' | 'Override' | null;
   readonly resolutionType: string | null;
   readonly resolutionDetails: unknown;
   readonly status: 'unresolved' | 'assigned' | 'intentionally_uncovered';
@@ -316,9 +318,11 @@ export async function addAbsence(input: {
 
 export async function getCandidates(
   assignmentId: string,
+  signal?: AbortSignal,
 ): Promise<CandidatePreview[]> {
   const result = await apiRequest<{ candidates: CandidatePreview[] }>(
     `/api/assignments/${encodeURIComponent(assignmentId)}/candidates`,
+    { signal },
   );
   return result.candidates;
 }

@@ -248,6 +248,223 @@ describe('persisted MVP workflow', () => {
     expect(audit?.override_acknowledged_at).toBeTruthy();
   });
 
+  it('returns batched candidate availability and rolling workload data used by the resolution UI', async () => {
+    const targetDate = '2027-01-14';
+    const priorDate = '2027-01-12';
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(
+        `INSERT INTO staff (id, display_name, role, is_active, can_sub, is_school_sub)
+         VALUES
+           ('staff_candidate_plan', 'Candidate Plan', 'teacher', 1, 1, 0),
+           ('staff_candidate_low', 'Candidate Lower Burden', 'teacher', 1, 1, 0),
+           ('staff_candidate_admin', 'Candidate Admin', 'administrator', 1, 1, 0),
+           ('staff_candidate_manual', 'Candidate Manual', 'teacher', 1, 1, 0),
+           ('staff_candidate_threshold', 'Candidate Threshold', 'teacher', 1, 1, 0),
+           ('staff_candidate_conflict', 'Candidate Conflict', 'teacher', 1, 1, 0)`,
+      ),
+      testEnv.DB.prepare(
+        `INSERT INTO schedule_entries (
+           id, schedule_version_id, staff_id, day_type, start_time, end_time,
+           activity_type, category, description, room_id, requires_sub
+         ) VALUES
+           ('candidate_plan_0900', 'schedule_2026_fall', 'staff_candidate_plan', 'A', '09:00', '09:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_plan_0940', 'schedule_2026_fall', 'staff_candidate_plan', 'A', '09:40', '10:20', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_low_0900', 'schedule_2026_fall', 'staff_candidate_low', 'A', '09:00', '09:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_low_0940', 'schedule_2026_fall', 'staff_candidate_low', 'A', '09:40', '10:20', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_admin_0900', 'schedule_2026_fall', 'staff_candidate_admin', 'A', '09:00', '10:20', 'admin', 'PLAN_ADMIN', 'Admin', NULL, 0),
+           ('candidate_conflict_plan', 'schedule_2026_fall', 'staff_candidate_conflict', 'A', '09:00', '09:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_conflict_class', 'schedule_2026_fall', 'staff_candidate_conflict', 'A', '09:00', '09:40', 'instruction', 'INT', 'INT Math', 'room_int_301', 1),
+           ('candidate_threshold_0900', 'schedule_2026_fall', 'staff_candidate_threshold', 'A', '09:00', '09:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_threshold_1000', 'schedule_2026_fall', 'staff_candidate_threshold', 'A', '10:00', '10:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_threshold_1040', 'schedule_2026_fall', 'staff_candidate_threshold', 'A', '10:40', '11:20', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_threshold_1120', 'schedule_2026_fall', 'staff_candidate_threshold', 'A', '11:20', '12:00', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_threshold_1200', 'schedule_2026_fall', 'staff_candidate_threshold', 'A', '12:00', '12:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_threshold_1240', 'schedule_2026_fall', 'staff_candidate_threshold', 'A', '12:40', '13:20', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_target_whole_source', 'schedule_2026_fall', 'staff_avery_bennett', 'A', '09:00', '09:40', 'instruction', 'PRI', 'Target Whole', 'room_pri_101', 1),
+           ('candidate_target_partial_source', 'schedule_2026_fall', 'staff_avery_bennett', 'A', '09:00', '09:20', 'instruction', 'PRI', 'Target Partial', 'room_pri_101', 1),
+           ('candidate_target_span_source', 'schedule_2026_fall', 'staff_avery_bennett', 'A', '09:00', '09:50', 'instruction', 'PRI', 'Target Span', 'room_pri_101', 1),
+           ('candidate_prior_direct_source', 'schedule_2026_fall', 'staff_jordan_kim', 'A', '09:00', '09:40', 'instruction', 'EL', 'Prior Direct', 'room_el_204', 1),
+           ('candidate_prior_split_source', 'schedule_2026_fall', 'staff_jordan_kim', 'A', '09:40', '10:20', 'instruction', 'EL', 'Prior Split', 'room_el_204', 1),
+           ('candidate_prior_threshold_source', 'schedule_2026_fall', 'staff_jordan_kim', 'A', '10:00', '13:10', 'instruction', 'EL', 'Prior Threshold', 'room_el_204', 1)`,
+      ),
+      testEnv.DB.prepare(
+        `INSERT INTO daily_sub_plans (
+           id, date, day_type, schedule_version_id, special_schedule_id,
+           status, created_by, updated_by
+         ) VALUES
+           ('candidate_target_plan', ?, 'A', 'schedule_2026_fall', NULL, 'draft', 'user_local_admin', 'user_local_admin'),
+           ('candidate_prior_plan', ?, 'A', 'schedule_2026_fall', NULL, 'draft', 'user_local_admin', 'user_local_admin')`,
+      ).bind(targetDate, priorDate),
+      testEnv.DB.prepare(
+        `INSERT INTO absences (
+           id, staff_id, start_date, end_date, start_time, end_time,
+           created_by, updated_by
+         ) VALUES
+           ('candidate_target_absence', 'staff_avery_bennett', ?, ?, NULL, NULL, 'user_local_admin', 'user_local_admin'),
+           ('candidate_prior_absence', 'staff_jordan_kim', ?, ?, NULL, NULL, 'user_local_admin', 'user_local_admin')`,
+      ).bind(targetDate, targetDate, priorDate, priorDate),
+      testEnv.DB.prepare(
+        `INSERT INTO default_sub_plan_actions (
+           id, default_sub_plan_id, sequence, start_time, end_time,
+           action_type, assigned_staff_id, room_id, details_json
+         ) VALUES (
+           'candidate_default_action', 'default_avery_shared', 99,
+           '09:00', '09:40', 'teacher_covers', 'staff_candidate_plan', NULL, NULL
+         )`,
+      ),
+      testEnv.DB.prepare(
+        `INSERT INTO assignments (
+           id, daily_sub_plan_id, absence_id, source_schedule_entry_id,
+           source_special_schedule_entry_id, start_time, end_time,
+           responsibility_type, description, room_id, default_action_id,
+           assigned_staff_id, resolution_type, status, is_default, updated_by
+         ) VALUES
+           ('candidate_target_whole', 'candidate_target_plan', 'candidate_target_absence', 'candidate_target_whole_source', NULL, '09:00', '09:40', 'instruction', 'Target Whole', 'room_pri_101', 'candidate_default_action', NULL, NULL, 'unresolved', 0, 'user_local_admin'),
+           ('candidate_target_partial', 'candidate_target_plan', 'candidate_target_absence', 'candidate_target_partial_source', NULL, '09:00', '09:20', 'instruction', 'Target Partial', 'room_pri_101', NULL, NULL, NULL, 'unresolved', 0, 'user_local_admin'),
+           ('candidate_target_span', 'candidate_target_plan', 'candidate_target_absence', 'candidate_target_span_source', NULL, '09:00', '09:50', 'instruction', 'Target Span', 'room_pri_101', NULL, NULL, NULL, 'unresolved', 0, 'user_local_admin'),
+           ('candidate_prior_direct', 'candidate_prior_plan', 'candidate_prior_absence', 'candidate_prior_direct_source', NULL, '09:00', '09:40', 'instruction', 'Prior Direct', 'room_el_204', NULL, 'staff_candidate_plan', 'teacher_cover', 'assigned', 0, 'user_local_admin'),
+           ('candidate_prior_split', 'candidate_prior_plan', 'candidate_prior_absence', 'candidate_prior_split_source', NULL, '09:40', '10:20', 'instruction', 'Prior Split', 'room_el_204', NULL, NULL, 'split_coverage', 'assigned', 0, 'user_local_admin'),
+           ('candidate_prior_threshold', 'candidate_prior_plan', 'candidate_prior_absence', 'candidate_prior_threshold_source', NULL, '10:00', '13:10', 'instruction', 'Prior Threshold', 'room_el_204', NULL, 'staff_candidate_threshold', 'teacher_cover', 'assigned', 0, 'user_local_admin')`,
+      ),
+      testEnv.DB.prepare(
+        `INSERT INTO assignment_segments (
+           id, assignment_id, start_time, end_time, staff_id, sequence
+         ) VALUES
+           ('candidate_prior_split_first', 'candidate_prior_split', '09:40', '10:00', 'staff_candidate_plan', 0),
+           ('candidate_prior_split_second', 'candidate_prior_split', '10:00', '10:20', 'staff_casey_brooks', 1)`,
+      ),
+    ]);
+
+    type Candidate = {
+      id: string;
+      availability: string;
+      availabilitySource: string;
+      conflicts: string[];
+      warnings: string[];
+      currentBurden: number;
+      proposedBurden: number;
+      projectedBurden: number;
+      windowDays: number;
+    };
+    async function candidatesFor(id: string) {
+      const result = await api(
+        `/api/assignments/${encodeURIComponent(id)}/candidates`,
+      );
+      expect(result.response.status).toBe(200);
+      return data<{ candidates: Candidate[] }>(result.payload).candidates;
+    }
+
+    const whole = await candidatesFor('candidate_target_whole');
+    expect(whole[0]).toMatchObject({
+      id: 'staff_candidate_plan',
+      availability: 'default',
+      currentBurden: 1.5,
+      proposedBurden: 1,
+      projectedBurden: 2.5,
+      windowDays: 7,
+    });
+    expect(whole[1]).toMatchObject({
+      id: 'staff_riley_quinn',
+      availability: 'school_sub',
+      currentBurden: 0,
+      proposedBurden: 0,
+    });
+
+    const partial = await candidatesFor('candidate_target_partial');
+    const candidatePlan = partial.find(
+      (candidate) => candidate.id === 'staff_candidate_plan',
+    );
+    const threshold = partial.find(
+      (candidate) => candidate.id === 'staff_candidate_threshold',
+    );
+    const admin = partial.find(
+      (candidate) => candidate.id === 'staff_candidate_admin',
+    );
+    const schoolSub = partial.find(
+      (candidate) => candidate.id === 'staff_riley_quinn',
+    );
+    const manual = partial.find(
+      (candidate) => candidate.id === 'staff_candidate_manual',
+    );
+    const conflicted = partial.find(
+      (candidate) => candidate.id === 'staff_candidate_conflict',
+    );
+    expect(candidatePlan).toMatchObject({
+      availability: 'plan',
+      currentBurden: 1.5,
+      proposedBurden: 0.5,
+      projectedBurden: 2,
+    });
+    expect(threshold).toMatchObject({
+      availability: 'plan',
+      currentBurden: 4.75,
+      proposedBurden: 0.5,
+      projectedBurden: 5.25,
+    });
+    expect(threshold?.warnings.join(' ')).toContain('5.25');
+    expect(admin).toMatchObject({
+      availability: 'admin',
+      availabilitySource: 'Admin',
+      proposedBurden: 0,
+    });
+    expect(schoolSub).toMatchObject({
+      availability: 'school_sub',
+      currentBurden: 0,
+      proposedBurden: 0,
+    });
+    expect(manual).toMatchObject({
+      availability: 'manual',
+      warnings: [],
+    });
+    expect(conflicted?.conflicts).toContain(
+      'Scheduled conflict: INT Math, 09:00–09:40.',
+    );
+    expect(
+      partial.findIndex((candidate) => candidate.id === 'staff_candidate_low'),
+    ).toBeLessThan(
+      partial.findIndex((candidate) => candidate.id === 'staff_candidate_plan'),
+    );
+    expect(
+      partial.findIndex(
+        (candidate) => candidate.id === 'staff_candidate_admin',
+      ),
+    ).toBeLessThan(
+      partial.findIndex(
+        (candidate) => candidate.id === 'staff_candidate_conflict',
+      ),
+    );
+
+    const spanning = await candidatesFor('candidate_target_span');
+    expect(
+      spanning.find((candidate) => candidate.id === 'staff_candidate_plan'),
+    ).toMatchObject({
+      currentBurden: 1.5,
+      proposedBurden: 1.25,
+      projectedBurden: 2.75,
+    });
+
+    await testEnv.DB.prepare(
+      `UPDATE assignments
+          SET assigned_staff_id = 'staff_candidate_plan',
+              resolution_type = 'teacher_cover', status = 'assigned'
+        WHERE id = 'candidate_target_whole'`,
+    ).run();
+    const reassignment = await candidatesFor('candidate_target_whole');
+    expect(
+      reassignment.find((candidate) => candidate.id === 'staff_candidate_plan'),
+    ).toMatchObject({ currentBurden: 1.5, projectedBurden: 2.5 });
+    const detail = data<{
+      detail: {
+        assignments: Array<{ id: string; resolutionSource: string | null }>;
+      };
+    }>((await api(`/api/plans/${targetDate}`)).payload).detail;
+    expect(
+      detail.assignments.find(
+        (assignment) => assignment.id === 'candidate_target_whole',
+      ),
+    ).toMatchObject({ resolutionSource: 'PLAN' });
+  });
+
   it('generates independent idempotent Assignments for an A/B/A multi-day absence', async () => {
     const dates = ['2026-10-12', '2026-10-13', '2026-10-14'] as const;
     for (const [index, date] of dates.entries()) {
