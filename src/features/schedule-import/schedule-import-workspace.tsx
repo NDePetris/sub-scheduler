@@ -4,6 +4,7 @@ import {
   Check,
   FileSpreadsheet,
   Link2,
+  LoaderCircle,
   Plus,
   Settings2,
   Trash2,
@@ -48,6 +49,13 @@ interface Confirmation {
   readonly action: () => Promise<void>;
 }
 
+interface BulkCreateProgress {
+  readonly importId: string;
+  readonly status: 'running' | 'complete';
+  readonly completed: number;
+  readonly total: number;
+}
+
 export function ScheduleImportWorkspace() {
   const [management, setManagement] = useState<ScheduleManagementData | null>(
     null,
@@ -76,6 +84,8 @@ export function ScheduleImportWorkspace() {
   const [targets, setTargets] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [bulkCreateProgress, setBulkCreateProgress] =
+    useState<BulkCreateProgress | null>(null);
 
   useEffect(() => {
     void loadAll();
@@ -111,6 +121,7 @@ export function ScheduleImportWorkspace() {
     if (!file) return setError('Choose an .xlsx workbook.');
     setBusy(true);
     setError(null);
+    setBulkCreateProgress(null);
     try {
       const result = await uploadScheduleImport({
         file,
@@ -166,34 +177,90 @@ export function ScheduleImportWorkspace() {
 
   async function createAllMissing() {
     if (!selected) return;
-    await run(async () => {
-      let result = selected;
-      for (const mapping of selected.staffMappings.filter(
-        (item) => !item.targetId,
-      )) {
-        result = await mapImportValue(selected.id, {
-          kind: 'staff',
-          displayValue: mapping.displayValue,
-          createNew: true,
-        });
-      }
-      for (const mapping of selected.roomMappings.filter(
-        (item) => !item.targetId,
-      )) {
-        result = await mapImportValue(selected.id, {
-          kind: 'room',
-          displayValue: mapping.displayValue,
-          createNew: true,
-        });
-      }
-      replaceImport(result);
-      const [nextStaff, nextRooms] = await Promise.all([
-        listStaff(),
-        listRooms(),
-      ]);
-      setStaff(nextStaff);
-      setRooms(nextRooms);
+    const selectedImport = selected;
+    const missingMappings = [
+      ...selectedImport.staffMappings
+        .filter((item) => !item.targetId)
+        .map((item) => ({ kind: 'staff' as const, ...item })),
+      ...selectedImport.roomMappings
+        .filter((item) => !item.targetId)
+        .map((item) => ({ kind: 'room' as const, ...item })),
+    ];
+    const total = missingMappings.length;
+    if (total === 0) return;
+
+    let completed = 0;
+    setBusy(true);
+    setError(null);
+    setBulkCreateProgress({
+      importId: selectedImport.id,
+      status: 'running',
+      completed,
+      total,
     });
+
+    let result = selectedImport;
+    try {
+      for (const mapping of missingMappings) {
+        result = await mapImportValue(selectedImport.id, {
+          kind: mapping.kind,
+          displayValue: mapping.displayValue,
+          createNew: true,
+        });
+        completed += 1;
+        replaceImport(result);
+        setBulkCreateProgress({
+          importId: selectedImport.id,
+          status: 'running',
+          completed,
+          total,
+        });
+      }
+    } catch (cause) {
+      try {
+        await refreshImportState(selectedImport.id);
+      } catch {
+        // Each successful mapping already replaced local state above.
+      }
+      setBulkCreateProgress(null);
+      setError(
+        `Creating records stopped after ${completed} of ${total}. ${message(cause)}`,
+      );
+      setBusy(false);
+      return;
+    }
+
+    try {
+      await refreshImportState(selectedImport.id, result);
+    } catch (cause) {
+      setError(
+        `${total} record${total === 1 ? ' was' : 's were'} created, but refreshed Staff and Rooms could not be loaded. ${message(cause)}`,
+      );
+    }
+    setBulkCreateProgress({
+      importId: selectedImport.id,
+      status: 'complete',
+      completed,
+      total,
+    });
+    setBusy(false);
+  }
+
+  async function refreshImportState(
+    importId: string,
+    fallback?: ScheduleImportDetail,
+  ) {
+    const [importValues, nextStaff, nextRooms] = await Promise.all([
+      listScheduleImports(),
+      listStaff(),
+      listRooms(),
+    ]);
+    const refreshed =
+      importValues.find((item) => item.id === importId) ?? fallback;
+    setImports(importValues);
+    if (refreshed) setSelected(refreshed);
+    setStaff(nextStaff);
+    setRooms(nextRooms);
   }
 
   function confirmCreateAllMissing() {
@@ -317,6 +384,29 @@ export function ScheduleImportWorkspace() {
     });
   }
 
+  function startOver(item: ScheduleImportDetail) {
+    setConfirmation({
+      title: 'Start over with a different workbook?',
+      body: `The current staged import and its staged mappings and entries will be deleted. Staff and Rooms already created from it will remain.`,
+      confirmLabel: 'Delete & Start Over',
+      action: async () =>
+        run(async () => {
+          await deleteScheduleImport(item.id);
+          setImports((values) =>
+            values.filter((value) => value.id !== item.id),
+          );
+          setSelected(null);
+          setTargets({});
+          setScheduleName('Imported School Schedule');
+          setEffectiveFrom(management?.schoolDate ?? '');
+          setEffectiveTo('');
+          setSpecialName('');
+          setSpecialDate('');
+          clearFile();
+        }),
+    });
+  }
+
   function removeVersion(item: ScheduleVersionSummary) {
     setConfirmation({
       title: 'Delete Schedule Version?',
@@ -367,6 +457,7 @@ export function ScheduleImportWorkspace() {
   async function run(operation: () => Promise<void>) {
     setBusy(true);
     setError(null);
+    setBulkCreateProgress(null);
     try {
       await operation();
     } catch (cause) {
@@ -377,6 +468,14 @@ export function ScheduleImportWorkspace() {
   }
 
   const staged = imports.filter((item) => item.status !== 'activated');
+  const selectedNormal =
+    selected?.kind === 'normal' && selected.status !== 'activated'
+      ? selected
+      : null;
+  const selectedSpecial =
+    selected?.kind === 'special' && selected.status !== 'activated'
+      ? selected
+      : null;
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-5">
@@ -405,94 +504,79 @@ export function ScheduleImportWorkspace() {
               variant="ghost"
               size="icon"
               aria-label="Close import workflow"
+              disabled={busy}
               onClick={() => setShowImport(false)}
             >
               <X className="size-4" />
             </Button>
           </div>
-          <form
-            onSubmit={(event) => void upload(event, 'normal')}
-            className="grid grid-cols-[1fr_170px_170px_auto] items-end gap-3 p-5"
-          >
-            <label className="text-muted-foreground text-xs font-semibold">
-              Workbook (.xlsx)
-              <span className="border-border hover:border-brand mt-1 flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed bg-white px-3 text-sm">
-                <FileSpreadsheet className="text-brand-dark size-4" />
-                <span className="text-foreground min-w-0 flex-1 truncate">
-                  {file?.name ?? 'Choose workbook'}
-                </span>
-                {file && (
-                  <button
-                    type="button"
-                    aria-label="Clear selected workbook"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      clearFile();
-                    }}
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="size-4" />
-                  </button>
-                )}
-              </span>
-              <input
-                ref={fileInput}
-                type="file"
-                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                className="sr-only"
+          {selectedNormal ? (
+            <StagedSourceSummary
+              selected={selectedNormal}
+              busy={busy}
+              onStartOver={() => startOver(selectedNormal)}
+            />
+          ) : (
+            <form
+              onSubmit={(event) => void upload(event, 'normal')}
+              className="grid grid-cols-[1fr_170px_170px_auto] items-end gap-3 p-5"
+            >
+              <WorkbookInput
+                file={file}
+                fileInput={fileInput}
+                onFile={setFile}
+                onClear={clearFile}
               />
-            </label>
-            <Labeled label="Effective From">
-              <input
-                type="date"
-                value={effectiveFrom}
-                onChange={(event) => setEffectiveFrom(event.target.value)}
-                className="field"
-                required
-              />
-            </Labeled>
-            <Labeled label="Effective To (optional)">
-              <input
-                type="date"
-                min={effectiveFrom}
-                value={effectiveTo}
-                onChange={(event) => setEffectiveTo(event.target.value)}
-                className="field"
-              />
-            </Labeled>
-            <Button type="submit" disabled={busy || !file}>
-              Upload &amp; Validate
-            </Button>
-          </form>
-          {selected &&
-            selected.kind === 'normal' &&
-            selected.status !== 'activated' && (
-              <Configuration
-                selected={selected}
-                staff={staff}
-                rooms={rooms}
-                targets={targets}
-                scheduleName={scheduleName}
-                effectiveFrom={effectiveFrom}
-                effectiveTo={effectiveTo}
-                specialName={specialName}
-                specialDate={specialDate}
-                busy={busy}
-                onName={setScheduleName}
-                onEffectiveFrom={setEffectiveFrom}
-                onEffectiveTo={setEffectiveTo}
-                onSpecialName={setSpecialName}
-                onSpecialDate={setSpecialDate}
-                onTarget={(key, value) =>
-                  setTargets((current) => ({ ...current, [key]: value }))
-                }
-                onMap={map}
-                onCreateAll={confirmCreateAllMissing}
-                onSave={saveStagedConfiguration}
-                onActivate={beginActivation}
-              />
-            )}
+              <Labeled label="Effective From">
+                <input
+                  type="date"
+                  value={effectiveFrom}
+                  onChange={(event) => setEffectiveFrom(event.target.value)}
+                  className="field"
+                  required
+                />
+              </Labeled>
+              <Labeled label="Effective To (optional)">
+                <input
+                  type="date"
+                  min={effectiveFrom}
+                  value={effectiveTo}
+                  onChange={(event) => setEffectiveTo(event.target.value)}
+                  className="field"
+                />
+              </Labeled>
+              <Button type="submit" disabled={busy || !file}>
+                Upload &amp; Validate
+              </Button>
+            </form>
+          )}
+          {selectedNormal && (
+            <Configuration
+              selected={selectedNormal}
+              staff={staff}
+              rooms={rooms}
+              targets={targets}
+              scheduleName={scheduleName}
+              effectiveFrom={effectiveFrom}
+              effectiveTo={effectiveTo}
+              specialName={specialName}
+              specialDate={specialDate}
+              busy={busy}
+              bulkCreateProgress={bulkCreateProgress}
+              onName={setScheduleName}
+              onEffectiveFrom={setEffectiveFrom}
+              onEffectiveTo={setEffectiveTo}
+              onSpecialName={setSpecialName}
+              onSpecialDate={setSpecialDate}
+              onTarget={(key, value) =>
+                setTargets((current) => ({ ...current, [key]: value }))
+              }
+              onMap={map}
+              onCreateAll={confirmCreateAllMissing}
+              onSave={saveStagedConfiguration}
+              onActivate={beginActivation}
+            />
+          )}
         </section>
       )}
 
@@ -506,6 +590,7 @@ export function ScheduleImportWorkspace() {
             </p>
           </div>
           <Button
+            disabled={busy}
             onClick={() => {
               setShowImport((value) => !value);
               setShowSpecialImport(false);
@@ -568,7 +653,9 @@ export function ScheduleImportWorkspace() {
                   <Button
                     size="sm"
                     variant="secondary"
+                    disabled={busy}
                     onClick={() => {
+                      setBulkCreateProgress(null);
                       setSelected(item);
                       setScheduleName(item.name);
                       setSpecialName(item.name);
@@ -584,6 +671,7 @@ export function ScheduleImportWorkspace() {
                   <Button
                     size="icon"
                     variant="ghost"
+                    disabled={busy}
                     aria-label={`Delete ${item.sourceFileName}`}
                     onClick={() => void removeImport(item)}
                   >
@@ -609,94 +697,79 @@ export function ScheduleImportWorkspace() {
               variant="ghost"
               size="icon"
               aria-label="Close Special Schedule workflow"
+              disabled={busy}
               onClick={() => setShowSpecialImport(false)}
             >
               <X className="size-4" />
             </Button>
           </div>
-          <form
-            onSubmit={(event) => void upload(event, 'special')}
-            className="grid grid-cols-[1fr_200px_240px_auto] items-end gap-3 p-5"
-          >
-            <label className="text-muted-foreground text-xs font-semibold">
-              Workbook (.xlsx)
-              <span className="border-border hover:border-brand mt-1 flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed bg-white px-3 text-sm">
-                <FileSpreadsheet className="text-brand-dark size-4" />
-                <span className="text-foreground min-w-0 flex-1 truncate">
-                  {file?.name ?? 'Choose workbook'}
-                </span>
-                {file && (
-                  <button
-                    type="button"
-                    aria-label="Clear selected workbook"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      clearFile();
-                    }}
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="size-4" />
-                  </button>
-                )}
-              </span>
-              <input
-                ref={fileInput}
-                type="file"
-                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                className="sr-only"
+          {selectedSpecial ? (
+            <StagedSourceSummary
+              selected={selectedSpecial}
+              busy={busy}
+              onStartOver={() => startOver(selectedSpecial)}
+            />
+          ) : (
+            <form
+              onSubmit={(event) => void upload(event, 'special')}
+              className="grid grid-cols-[1fr_200px_240px_auto] items-end gap-3 p-5"
+            >
+              <WorkbookInput
+                file={file}
+                fileInput={fileInput}
+                onFile={setFile}
+                onClear={clearFile}
               />
-            </label>
-            <Labeled label="Date">
-              <input
-                type="date"
-                value={specialDate}
-                onChange={(event) => setSpecialDate(event.target.value)}
-                className="field"
-                required
-              />
-            </Labeled>
-            <Labeled label="Special Schedule Name">
-              <input
-                value={specialName}
-                onChange={(event) => setSpecialName(event.target.value)}
-                className="field"
-                placeholder="Early Dismissal"
-                required
-              />
-            </Labeled>
-            <Button type="submit" disabled={busy || !file}>
-              Upload &amp; Validate
-            </Button>
-          </form>
-          {selected &&
-            selected.kind === 'special' &&
-            selected.status !== 'activated' && (
-              <Configuration
-                selected={selected}
-                staff={staff}
-                rooms={rooms}
-                targets={targets}
-                scheduleName={scheduleName}
-                effectiveFrom={effectiveFrom}
-                effectiveTo={effectiveTo}
-                specialName={specialName}
-                specialDate={specialDate}
-                busy={busy}
-                onName={setScheduleName}
-                onEffectiveFrom={setEffectiveFrom}
-                onEffectiveTo={setEffectiveTo}
-                onSpecialName={setSpecialName}
-                onSpecialDate={setSpecialDate}
-                onTarget={(key, value) =>
-                  setTargets((current) => ({ ...current, [key]: value }))
-                }
-                onMap={map}
-                onCreateAll={confirmCreateAllMissing}
-                onSave={saveStagedConfiguration}
-                onActivate={beginSpecialActivation}
-              />
-            )}
+              <Labeled label="Date">
+                <input
+                  type="date"
+                  value={specialDate}
+                  onChange={(event) => setSpecialDate(event.target.value)}
+                  className="field"
+                  required
+                />
+              </Labeled>
+              <Labeled label="Special Schedule Name">
+                <input
+                  value={specialName}
+                  onChange={(event) => setSpecialName(event.target.value)}
+                  className="field"
+                  placeholder="Early Dismissal"
+                  required
+                />
+              </Labeled>
+              <Button type="submit" disabled={busy || !file}>
+                Upload &amp; Validate
+              </Button>
+            </form>
+          )}
+          {selectedSpecial && (
+            <Configuration
+              selected={selectedSpecial}
+              staff={staff}
+              rooms={rooms}
+              targets={targets}
+              scheduleName={scheduleName}
+              effectiveFrom={effectiveFrom}
+              effectiveTo={effectiveTo}
+              specialName={specialName}
+              specialDate={specialDate}
+              busy={busy}
+              bulkCreateProgress={bulkCreateProgress}
+              onName={setScheduleName}
+              onEffectiveFrom={setEffectiveFrom}
+              onEffectiveTo={setEffectiveTo}
+              onSpecialName={setSpecialName}
+              onSpecialDate={setSpecialDate}
+              onTarget={(key, value) =>
+                setTargets((current) => ({ ...current, [key]: value }))
+              }
+              onMap={map}
+              onCreateAll={confirmCreateAllMissing}
+              onSave={saveStagedConfiguration}
+              onActivate={beginSpecialActivation}
+            />
+          )}
         </section>
       )}
 
@@ -710,6 +783,7 @@ export function ScheduleImportWorkspace() {
             </p>
           </div>
           <Button
+            disabled={busy}
             onClick={() => {
               setShowSpecialImport((value) => !value);
               setShowImport(false);
@@ -951,6 +1025,133 @@ function ScheduleTable({
   );
 }
 
+function WorkbookInput({
+  file,
+  fileInput,
+  onFile,
+  onClear,
+}: {
+  readonly file: File | null;
+  readonly fileInput: React.RefObject<HTMLInputElement | null>;
+  readonly onFile: (file: File | null) => void;
+  readonly onClear: () => void;
+}) {
+  return (
+    <label className="text-muted-foreground text-xs font-semibold">
+      Workbook (.xlsx)
+      <span className="border-border hover:border-brand mt-1 flex h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed bg-white px-3 text-sm">
+        <FileSpreadsheet className="text-brand-dark size-4" />
+        <span className="text-foreground min-w-0 flex-1 truncate">
+          {file?.name ?? 'Choose workbook'}
+        </span>
+        {file && (
+          <button
+            type="button"
+            aria-label="Clear selected workbook"
+            onClick={(event) => {
+              event.preventDefault();
+              onClear();
+            }}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        )}
+      </span>
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        onChange={(event) => onFile(event.target.files?.[0] ?? null)}
+        className="sr-only"
+      />
+    </label>
+  );
+}
+
+function StagedSourceSummary({
+  selected,
+  busy,
+  onStartOver,
+}: {
+  readonly selected: ScheduleImportDetail;
+  readonly busy: boolean;
+  readonly onStartOver: () => void;
+}) {
+  return (
+    <div className="bg-muted/30 flex items-center justify-between gap-4 px-5 py-4">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="border-brand/20 bg-brand-soft rounded-md border p-2">
+          <FileSpreadsheet className="text-brand-dark size-5" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-muted-foreground text-xs font-semibold">
+            Workbook
+          </p>
+          <p className="truncate text-sm font-semibold">
+            {selected.sourceFileName}
+          </p>
+          {selected.sheetName && (
+            <p className="text-muted-foreground text-xs">
+              Worksheet: {selected.sheetName}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <span className="text-brand-dark flex items-center gap-1.5 text-sm font-semibold">
+          <Check className="size-4" aria-hidden="true" /> Uploaded and staged
+        </span>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={busy}
+          onClick={onStartOver}
+        >
+          Choose Different Workbook
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function BulkCreateStatus({
+  progress,
+}: {
+  readonly progress: BulkCreateProgress;
+}) {
+  if (progress.status === 'complete') {
+    return (
+      <div
+        className="text-brand-dark flex items-center gap-1.5 text-sm font-semibold"
+        role="status"
+        aria-live="polite"
+      >
+        <Check className="size-4" aria-hidden="true" />
+        {progress.total} record{progress.total === 1 ? '' : 's'} created.
+      </div>
+    );
+  }
+
+  const progressText = `Creating records… ${progress.completed} of ${progress.total}`;
+  return (
+    <div aria-live="polite" aria-atomic="true">
+      <div
+        className="text-brand-dark flex items-center gap-1.5 text-sm font-semibold"
+        role="progressbar"
+        aria-label="Creating Staff and Room records"
+        aria-valuemin={0}
+        aria-valuemax={progress.total}
+        aria-valuenow={progress.completed}
+        aria-valuetext={progressText}
+      >
+        <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+        {progressText}
+      </div>
+    </div>
+  );
+}
+
 function Configuration({
   selected,
   staff,
@@ -962,6 +1163,7 @@ function Configuration({
   specialName,
   specialDate,
   busy,
+  bulkCreateProgress,
   onName,
   onEffectiveFrom,
   onEffectiveTo,
@@ -983,6 +1185,7 @@ function Configuration({
   readonly specialName: string;
   readonly specialDate: string;
   readonly busy: boolean;
+  readonly bulkCreateProgress: BulkCreateProgress | null;
   readonly onName: (value: string) => void;
   readonly onEffectiveFrom: (value: string) => void;
   readonly onEffectiveTo: (value: string) => void;
@@ -999,36 +1202,44 @@ function Configuration({
   readonly onActivate: () => Promise<void>;
 }) {
   const missing = selected.unmappedStaff + selected.unmappedRooms;
+  const selectedBulkProgress =
+    bulkCreateProgress?.importId === selected.id ? bulkCreateProgress : null;
   return (
-    <div className="border-border border-t">
+    <div
+      className="border-border border-t"
+      aria-busy={selectedBulkProgress?.status === 'running'}
+    >
       <div className="flex items-start justify-between gap-4 px-5 py-4">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="font-bold">Schedule Configuration</h2>
+            <h2 className="font-bold">
+              {selected.kind === 'normal'
+                ? 'Schedule Configuration'
+                : 'Special Schedule Configuration'}
+            </h2>
             <Badge>{selected.status}</Badge>
           </div>
           <p className="text-muted-foreground mt-1 text-xs">
-            {selected.sourceFileName} · {selected.sheetName} ·{' '}
-            {selected.entryCount} staged blocks ·{' '}
-            {selected.kind === 'special'
-              ? formatDate(selected.specialDate ?? '')
-              : `${formatDate(selected.effectiveFrom ?? '')} → ${
-                  selected.effectiveTo
-                    ? formatDate(selected.effectiveTo)
-                    : 'Open-ended'
-                }`}
+            {selected.entryCount} staged blocks
+            {selected.aBDetected ? ' · A/B schedule detected' : ''}
           </p>
         </div>
-        {missing > 0 && (
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={busy}
-            onClick={onCreateAll}
-          >
-            Create All Missing
-          </Button>
-        )}
+        <div className="flex min-h-8 items-center justify-end">
+          {selectedBulkProgress ? (
+            <BulkCreateStatus progress={selectedBulkProgress} />
+          ) : (
+            missing > 0 && (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={onCreateAll}
+              >
+                Create All Missing
+              </Button>
+            )
+          )}
+        </div>
       </div>
       <div className="grid grid-cols-5 gap-3 px-5 pb-5">
         <Result label="Staff recognized" value={selected.recognizedStaff} ok />
@@ -1118,6 +1329,7 @@ function Configuration({
                 value={scheduleName}
                 onChange={(event) => onName(event.target.value)}
                 className="field"
+                disabled={busy}
                 required
               />
             </Labeled>
@@ -1127,6 +1339,7 @@ function Configuration({
                 value={effectiveFrom}
                 onChange={(event) => onEffectiveFrom(event.target.value)}
                 className="field"
+                disabled={busy}
                 required
               />
             </Labeled>
@@ -1137,6 +1350,7 @@ function Configuration({
                 value={effectiveTo}
                 onChange={(event) => onEffectiveTo(event.target.value)}
                 className="field"
+                disabled={busy}
               />
             </Labeled>
           </div>
@@ -1147,6 +1361,7 @@ function Configuration({
                 value={specialName}
                 onChange={(event) => onSpecialName(event.target.value)}
                 className="field"
+                disabled={busy}
                 required
               />
             </Labeled>
@@ -1156,6 +1371,7 @@ function Configuration({
                 value={specialDate}
                 onChange={(event) => onSpecialDate(event.target.value)}
                 className="field"
+                disabled={busy}
                 required
               />
             </Labeled>
@@ -1345,6 +1561,7 @@ function MappingRow({
       <select
         value={target}
         onChange={(event) => onTarget(event.target.value)}
+        disabled={busy}
         className="field"
       >
         <option value="">Choose existing {kind}</option>
