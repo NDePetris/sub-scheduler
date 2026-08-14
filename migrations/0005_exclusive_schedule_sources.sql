@@ -63,6 +63,12 @@ DROP TABLE daily_sub_plan_assignments_backup;
 DROP TABLE daily_sub_plan_segments_backup;
 DROP TABLE daily_sub_plan_messages_backup;
 
+-- Preserve staged import detail before rebuilding its cascading parent.
+CREATE TABLE schedule_import_staff_backup AS SELECT * FROM schedule_import_staff;
+CREATE TABLE schedule_import_rooms_backup AS SELECT * FROM schedule_import_rooms;
+CREATE TABLE staged_schedule_entries_backup AS SELECT * FROM staged_schedule_entries;
+CREATE TABLE schedule_import_issues_backup AS SELECT * FROM schedule_import_issues;
+
 CREATE TABLE schedule_imports_rebuilt (
   id TEXT PRIMARY KEY,
   import_kind TEXT NOT NULL DEFAULT 'normal' CHECK (import_kind IN ('normal', 'special')),
@@ -128,6 +134,40 @@ FROM schedule_imports;
 
 DROP TABLE schedule_imports;
 ALTER TABLE schedule_imports_rebuilt RENAME TO schedule_imports;
+
+INSERT INTO schedule_import_staff (
+  import_id, display_value, staff_id, mapping_status
+)
+SELECT import_id, display_value, staff_id, mapping_status
+FROM schedule_import_staff_backup;
+
+INSERT INTO schedule_import_rooms (
+  import_id, display_value, room_id, mapping_status
+)
+SELECT import_id, display_value, room_id, mapping_status
+FROM schedule_import_rooms_backup;
+
+INSERT INTO staged_schedule_entries (
+  id, import_id, source_sheet, source_cell, staff_display_value,
+  room_display_value, day_type, start_time, end_time, activity_type,
+  category, description, requires_sub
+)
+SELECT
+  id, import_id, source_sheet, source_cell, staff_display_value,
+  room_display_value, day_type, start_time, end_time, activity_type,
+  category, description, requires_sub
+FROM staged_schedule_entries_backup;
+
+INSERT INTO schedule_import_issues (
+  id, import_id, severity, code, message, source_sheet, source_cell
+)
+SELECT id, import_id, severity, code, message, source_sheet, source_cell
+FROM schedule_import_issues_backup;
+
+DROP TABLE schedule_import_staff_backup;
+DROP TABLE schedule_import_rooms_backup;
+DROP TABLE staged_schedule_entries_backup;
+DROP TABLE schedule_import_issues_backup;
 
 CREATE UNIQUE INDEX schedule_imports_normal_source_hash
   ON schedule_imports (source_file_sha256, effective_from, COALESCE(effective_to, ''))

@@ -9,7 +9,7 @@ interface UpgradeEnv {
 const testEnv = env as unknown as UpgradeEnv;
 
 describe('exclusive schedule-source migration', () => {
-  it('converts legacy Special plans to Special-only without losing history or children', async () => {
+  it('preserves legacy plan and import children while making schedule sources exclusive', async () => {
     const legacyMigrations = testEnv.TEST_MIGRATIONS.filter(
       (migration) => migration.name < '0005_exclusive_schedule_sources.sql',
     );
@@ -26,9 +26,56 @@ describe('exclusive schedule-source migration', () => {
         `INSERT INTO staff (id, display_name) VALUES ('migration_staff', 'Fixture Teacher')`,
       ),
       testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO rooms (id, name) VALUES ('migration_room', 'Room F-101')`,
+      ),
+      testEnv.UPGRADE_DB.prepare(
         `INSERT INTO schedule_versions
            (id, name, effective_from, status, created_by)
          VALUES ('migration_normal', 'Normal', '2026-01-01', 'active', 'migration_actor')`,
+      ),
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO schedule_imports (
+           id, source_file_name, source_file_sha256, status, effective_from,
+           effective_to, sheet_name, recognized_staff_count,
+           recognized_room_count, a_b_detected, created_by, created_at
+         ) VALUES (
+           'migration_import', 'Fictional Middle Schedule.xlsx',
+           'fixture-hash-0005', 'ready', '2026-01-01', '2026-05-31',
+           'Schedule', 1, 1, 1, 'migration_actor', '2025-12-15T14:30:00.000Z'
+         )`,
+      ),
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO schedule_import_staff (
+           import_id, display_value, staff_id, mapping_status
+         ) VALUES (
+           'migration_import', 'Fixture Teacher', 'migration_staff', 'mapped'
+         )`,
+      ),
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO schedule_import_rooms (
+           import_id, display_value, room_id, mapping_status
+         ) VALUES (
+           'migration_import', 'Room F-101', 'migration_room', 'exact'
+         )`,
+      ),
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO staged_schedule_entries (
+           id, import_id, source_sheet, source_cell, staff_display_value,
+           room_display_value, day_type, start_time, end_time, activity_type,
+           category, description, requires_sub
+         ) VALUES (
+           'migration_staged_entry', 'migration_import', 'Schedule', 'B7',
+           'Fixture Teacher', 'Room F-101', 'A', '08:10', '09:00',
+           'instruction', 'MS', 'Fictional Mathematics', 1
+         )`,
+      ),
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO schedule_import_issues (
+           id, import_id, severity, code, message, source_sheet, source_cell
+         ) VALUES (
+           'migration_issue', 'migration_import', 'warning', 'FIXTURE_WARNING',
+           'Review this fictional fixture value.', 'Schedule', 'H7'
+         )`,
       ),
       testEnv.UPGRADE_DB.prepare(
         `INSERT INTO special_schedules
@@ -117,6 +164,97 @@ describe('exclusive schedule-source migration', () => {
       special_schedule_id: null,
     });
 
+    expect(
+      await testEnv.UPGRADE_DB.prepare(
+        `SELECT
+           id, import_kind, schedule_name, source_file_name,
+           source_file_sha256, status, effective_from, effective_to,
+           special_date, sheet_name, recognized_staff_count,
+           recognized_room_count, a_b_detected, created_by, created_at,
+           activated_schedule_version_id, activated_special_schedule_id,
+           activated_at
+         FROM schedule_imports WHERE id = 'migration_import'`,
+      ).first(),
+    ).toEqual({
+      id: 'migration_import',
+      import_kind: 'normal',
+      schedule_name: 'Fictional Middle Schedule.xlsx',
+      source_file_name: 'Fictional Middle Schedule.xlsx',
+      source_file_sha256: 'fixture-hash-0005',
+      status: 'ready',
+      effective_from: '2026-01-01',
+      effective_to: '2026-05-31',
+      special_date: null,
+      sheet_name: 'Schedule',
+      recognized_staff_count: 1,
+      recognized_room_count: 1,
+      a_b_detected: 1,
+      created_by: 'migration_actor',
+      created_at: '2025-12-15T14:30:00.000Z',
+      activated_schedule_version_id: null,
+      activated_special_schedule_id: null,
+      activated_at: null,
+    });
+    expect(
+      await testEnv.UPGRADE_DB.prepare(
+        `SELECT import_id, display_value, staff_id, mapping_status
+         FROM schedule_import_staff WHERE import_id = 'migration_import'`,
+      ).first(),
+    ).toEqual({
+      import_id: 'migration_import',
+      display_value: 'Fixture Teacher',
+      staff_id: 'migration_staff',
+      mapping_status: 'mapped',
+    });
+    expect(
+      await testEnv.UPGRADE_DB.prepare(
+        `SELECT import_id, display_value, room_id, mapping_status
+         FROM schedule_import_rooms WHERE import_id = 'migration_import'`,
+      ).first(),
+    ).toEqual({
+      import_id: 'migration_import',
+      display_value: 'Room F-101',
+      room_id: 'migration_room',
+      mapping_status: 'exact',
+    });
+    expect(
+      await testEnv.UPGRADE_DB.prepare(
+        `SELECT
+           id, import_id, source_sheet, source_cell, staff_display_value,
+           room_display_value, day_type, start_time, end_time, activity_type,
+           category, description, requires_sub
+         FROM staged_schedule_entries WHERE id = 'migration_staged_entry'`,
+      ).first(),
+    ).toEqual({
+      id: 'migration_staged_entry',
+      import_id: 'migration_import',
+      source_sheet: 'Schedule',
+      source_cell: 'B7',
+      staff_display_value: 'Fixture Teacher',
+      room_display_value: 'Room F-101',
+      day_type: 'A',
+      start_time: '08:10',
+      end_time: '09:00',
+      activity_type: 'instruction',
+      category: 'MS',
+      description: 'Fictional Mathematics',
+      requires_sub: 1,
+    });
+    expect(
+      await testEnv.UPGRADE_DB.prepare(
+        `SELECT id, import_id, severity, code, message, source_sheet, source_cell
+         FROM schedule_import_issues WHERE id = 'migration_issue'`,
+      ).first(),
+    ).toEqual({
+      id: 'migration_issue',
+      import_id: 'migration_import',
+      severity: 'warning',
+      code: 'FIXTURE_WARNING',
+      message: 'Review this fictional fixture value.',
+      source_sheet: 'Schedule',
+      source_cell: 'H7',
+    });
+
     await expect(
       testEnv.UPGRADE_DB.prepare(
         `INSERT INTO daily_sub_plans (
@@ -126,5 +264,38 @@ describe('exclusive schedule-source migration', () => {
                    'migration_special', 'draft', 'migration_actor', 'migration_actor')`,
       ).run(),
     ).rejects.toThrow();
+
+    const orphanedImportChildren = [
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO schedule_import_staff (
+           import_id, display_value, staff_id, mapping_status
+         ) VALUES ('missing_import', 'Orphan Staff', 'migration_staff', 'mapped')`,
+      ),
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO schedule_import_rooms (
+           import_id, display_value, room_id, mapping_status
+         ) VALUES ('missing_import', 'Orphan Room', 'migration_room', 'mapped')`,
+      ),
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO staged_schedule_entries (
+           id, import_id, source_sheet, source_cell, staff_display_value,
+           day_type, start_time, end_time, activity_type, category,
+           description, requires_sub
+         ) VALUES (
+           'orphan_entry', 'missing_import', 'Schedule', 'Z99', 'Orphan Staff',
+           'ALL', '10:00', '10:30', 'instruction', 'MS', 'Orphan Entry', 1
+         )`,
+      ),
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO schedule_import_issues (
+           id, import_id, severity, code, message
+         ) VALUES (
+           'orphan_issue', 'missing_import', 'warning', 'ORPHAN', 'Orphan Issue'
+         )`,
+      ),
+    ];
+    for (const statement of orphanedImportChildren) {
+      await expect(statement.run()).rejects.toThrow();
+    }
   });
 });
