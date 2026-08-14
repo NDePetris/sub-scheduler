@@ -139,6 +139,20 @@ const resolveSchema = z.object({
 });
 const messageEditSchema = z.object({ editedText: z.string().max(100_000) });
 const statusSchema = z.object({ status: z.enum(['draft', 'finalized']) });
+const staffRoleSchema = z.enum(['Teacher', 'Administrator', 'Staff']);
+const standardPeriodSchema = z.union([z.literal(40), z.literal(50), z.null()]);
+const staffCreateSchema = z.object({
+  displayName: z.string().trim().min(1).max(120),
+  role: staffRoleSchema.default('Teacher'),
+  canSub: z.boolean().default(true),
+  isSchoolSub: z.boolean().default(false),
+  standardPeriodMinutes: standardPeriodSchema.default(null),
+});
+const staffUpdateSchema = staffCreateSchema.required();
+const aliasSchema = z.object({
+  displayValue: z.string().trim().min(1).max(120),
+});
+const roomSchema = z.object({ name: z.string().trim().min(1).max(80) });
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -188,14 +202,147 @@ export default {
 
       if (url.pathname === '/api/staff' && request.method === 'GET') {
         return jsonSuccess(
-          { staff: await applicationRepository.listActiveStaff() },
+          {
+            staff: await applicationRepository.listStaff(
+              url.searchParams.get('includeInactive') === 'true',
+            ),
+          },
+          requestId,
+        );
+      }
+
+      if (url.pathname === '/api/staff' && request.method === 'POST') {
+        const body = staffCreateSchema.parse(await readJson(request));
+        return jsonSuccess(
+          { staff: await applicationRepository.createStaff(body) },
+          requestId,
+          201,
+        );
+      }
+
+      const staffMatch = /^\/api\/staff\/([^/]+)$/.exec(url.pathname);
+      if (staffMatch?.[1] && request.method === 'GET') {
+        return jsonSuccess(
+          {
+            staff: await applicationRepository.getStaff(
+              decodeURIComponent(staffMatch[1]),
+            ),
+          },
+          requestId,
+        );
+      }
+      if (staffMatch?.[1] && request.method === 'PATCH') {
+        const body = staffUpdateSchema.parse(await readJson(request));
+        return jsonSuccess(
+          {
+            staff: await applicationRepository.updateStaff(
+              decodeURIComponent(staffMatch[1]),
+              body,
+            ),
+          },
+          requestId,
+        );
+      }
+
+      const staffStatusMatch =
+        /^\/api\/staff\/([^/]+)\/(deactivate|reactivate)$/.exec(url.pathname);
+      if (
+        staffStatusMatch?.[1] &&
+        staffStatusMatch[2] &&
+        request.method === 'POST'
+      ) {
+        return jsonSuccess(
+          {
+            staff: await applicationRepository.setStaffActive(
+              decodeURIComponent(staffStatusMatch[1]),
+              staffStatusMatch[2] === 'reactivate',
+            ),
+          },
+          requestId,
+        );
+      }
+
+      const staffAliasCollectionMatch = /^\/api\/staff\/([^/]+)\/aliases$/.exec(
+        url.pathname,
+      );
+      if (staffAliasCollectionMatch?.[1] && request.method === 'POST') {
+        const body = aliasSchema.parse(await readJson(request));
+        return jsonSuccess(
+          {
+            staff: await applicationRepository.addStaffAlias(
+              decodeURIComponent(staffAliasCollectionMatch[1]),
+              body.displayValue,
+            ),
+          },
+          requestId,
+          201,
+        );
+      }
+
+      const staffAliasMatch = /^\/api\/staff\/([^/]+)\/aliases\/([^/]+)$/.exec(
+        url.pathname,
+      );
+      if (
+        staffAliasMatch?.[1] &&
+        staffAliasMatch[2] &&
+        request.method === 'DELETE'
+      ) {
+        return jsonSuccess(
+          {
+            staff: await applicationRepository.removeStaffAlias(
+              decodeURIComponent(staffAliasMatch[1]),
+              decodeURIComponent(staffAliasMatch[2]),
+            ),
+          },
           requestId,
         );
       }
 
       if (url.pathname === '/api/rooms' && request.method === 'GET') {
         return jsonSuccess(
-          { rooms: await applicationRepository.listActiveRooms() },
+          {
+            rooms: await applicationRepository.listRooms(
+              url.searchParams.get('includeInactive') === 'true',
+            ),
+          },
+          requestId,
+        );
+      }
+      if (url.pathname === '/api/rooms' && request.method === 'POST') {
+        const body = roomSchema.parse(await readJson(request));
+        return jsonSuccess(
+          { room: await applicationRepository.createRoom(body.name) },
+          requestId,
+          201,
+        );
+      }
+      const roomMatch = /^\/api\/rooms\/([^/]+)$/.exec(url.pathname);
+      if (roomMatch?.[1] && request.method === 'PATCH') {
+        const body = roomSchema.parse(await readJson(request));
+        return jsonSuccess(
+          {
+            room: await applicationRepository.updateRoom(
+              decodeURIComponent(roomMatch[1]),
+              body.name,
+            ),
+          },
+          requestId,
+        );
+      }
+      const roomStatusMatch =
+        /^\/api\/rooms\/([^/]+)\/(deactivate|reactivate)$/.exec(url.pathname);
+      if (
+        roomStatusMatch?.[1] &&
+        roomStatusMatch[2] &&
+        request.method === 'POST'
+      ) {
+        return jsonSuccess(
+          {
+            room: await applicationRepository.setRoomActive(
+              decodeURIComponent(roomStatusMatch[1]),
+              roomStatusMatch[2] === 'reactivate',
+            ),
+          },
           requestId,
         );
       }

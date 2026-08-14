@@ -63,7 +63,7 @@ Use the product terms exactly: **Sub Plan**, **Default Sub Plan**, **Needs Sub**
 - Absence and schedule intervals generate Assignments only when they overlap. Instructional responsibilities require resolution; eligible non-class responsibilities may be deliberately **Intentionally Uncovered**.
 - Apply a valid Default Sub Plan as a soft default and label it **Default**. If invalid, retain the default reference and explanation, mark the Assignment Unresolved, and suggest alternatives. Never silently substitute another person.
 - PLAN and Admin blocks create automatic availability. Other blocks do not. Only sacrificed PLAN time contributes to Plan Periods Lost; Admin time and School Sub assignments do not.
-- Plan Period Equivalents are calculated per affected PLAN block as `overlap minutes / that PLAN block's normal duration`, then summed.
+- Plan Period Equivalents are calculated as `coverage minutes overlapping PLAN / the staff member's configured or inferred standard instructional period minutes`, then summed.
 - Workload threshold and rolling-window length are settings (MVP defaults: `5.0` and `7` calendar days), not constants embedded in ranking logic.
 - Warnings are advisory. Clearly conflicting choices require an explicit **Assign Anyway** acknowledgement rather than a hard block.
 - Split coverage is stored as timed child segments of one Assignment, with 10-minute UI snapping by default. Do not invent numbered periods.

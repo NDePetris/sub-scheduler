@@ -4,9 +4,11 @@ import {
   affectedResponsibilities,
   calculatePlanPeriodsLost,
   enumerateWeekdaySchoolDates,
+  inferStandardPeriodMinutes,
   projectedPlanPeriodsLost,
   rankCandidates,
   renderSubPlanMessage,
+  resolveStandardPeriodMinutes,
   validateSplitSegments,
 } from '../../src/domain/planning';
 
@@ -85,6 +87,103 @@ describe('MVP planning domain', () => {
         [{ startTime: '09:00', endTime: '09:50' }],
       ),
     ).toBe(1.25);
+  });
+
+  it.each([
+    ['09:00', '09:20', 0.5],
+    ['09:00', '09:40', 1],
+    ['09:00', '09:50', 1.25],
+    ['09:00', '10:20', 2],
+  ])(
+    'uses a 40-minute standard period for merged PLAN coverage %s–%s',
+    (startTime, endTime, expected) => {
+      expect(
+        calculatePlanPeriodsLost(
+          [{ startTime: '09:00', endTime: '10:20' }],
+          [{ startTime, endTime }],
+          40,
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it.each([
+    ['09:00', '09:25', 0.5],
+    ['09:00', '09:50', 1],
+    ['09:00', '10:20', 1.6],
+  ])(
+    'uses a 50-minute standard period for PLAN coverage %s–%s',
+    (startTime, endTime, expected) => {
+      expect(
+        calculatePlanPeriodsLost(
+          [{ startTime: '09:00', endTime: '10:20' }],
+          [{ startTime, endTime }],
+          50,
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it('infers the most common instructional duration and ignores non-instructional blocks', () => {
+    const entries = [
+      {
+        dayType: 'ALL' as const,
+        startTime: '08:00',
+        endTime: '08:40',
+        activityType: 'instruction',
+      },
+      {
+        dayType: 'A' as const,
+        startTime: '08:40',
+        endTime: '09:20',
+        activityType: 'instruction',
+      },
+      {
+        dayType: 'A' as const,
+        startTime: '09:20',
+        endTime: '10:40',
+        activityType: 'plan',
+      },
+      {
+        dayType: 'A' as const,
+        startTime: '11:00',
+        endTime: '11:50',
+        activityType: 'instruction',
+      },
+    ];
+    expect(inferStandardPeriodMinutes(entries, 'A')).toBe(40);
+    expect(inferStandardPeriodMinutes(entries, 'B')).toBe(40);
+  });
+
+  it('infers 50-minute schedules and lets explicit configuration override Auto', () => {
+    const entries = [
+      {
+        dayType: 'ALL' as const,
+        startTime: '08:00',
+        endTime: '08:50',
+        activityType: 'instruction',
+      },
+      {
+        dayType: 'ALL' as const,
+        startTime: '09:00',
+        endTime: '09:50',
+        activityType: 'instruction',
+      },
+      {
+        dayType: 'ALL' as const,
+        startTime: '10:00',
+        endTime: '11:20',
+        activityType: 'plan',
+      },
+    ];
+    expect(inferStandardPeriodMinutes(entries, 'A')).toBe(50);
+    expect(
+      resolveStandardPeriodMinutes({
+        configuredMinutes: 40,
+        dayType: 'A',
+        normalEntries: entries,
+      }),
+    ).toBe(40);
   });
 
   it('previews a configured threshold crossing before assignment', () => {

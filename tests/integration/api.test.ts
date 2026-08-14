@@ -39,7 +39,7 @@ describe('Worker and D1 smoke path', () => {
           activeStaff: number;
           activeRooms: number;
           activeSchedule: { name: string; entryCount: number };
-          schoolSub: { displayName: string; isSchoolSub: boolean };
+          schoolSubs: { displayName: string; isSchoolSub: boolean }[];
           dayTypeCounts: { A: number; B: number; shared: number };
         };
       };
@@ -55,7 +55,7 @@ describe('Worker and D1 smoke path', () => {
           activeStaff: 7,
           activeRooms: 6,
           activeSchedule: { name: 'Fictional Fall Schedule', entryCount: 28 },
-          schoolSub: { displayName: 'Riley Quinn', isSchoolSub: true },
+          schoolSubs: [{ displayName: 'Riley Quinn', isSchoolSub: true }],
           dayTypeCounts: { A: 12, B: 11, shared: 5 },
         },
       },
@@ -72,10 +72,11 @@ describe('Worker and D1 smoke path', () => {
     } = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.data.staff[0]).toEqual({
+    expect(body.data.staff[0]).toMatchObject({
       id: 'staff_riley_quinn',
       displayName: 'Riley Quinn',
-      role: 'substitute',
+      role: 'Staff',
+      canSub: true,
       isSchoolSub: true,
     });
   });

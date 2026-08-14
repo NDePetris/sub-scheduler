@@ -117,8 +117,8 @@ Effective-date and name edits validate the complete active topology and use an a
 
 The logical entities from the MVP map to these responsibilities:
 
-- **Staff**: stable person identity, display name, role, active/can-sub flags, and `is_school_sub`. The School Sub is data, not a special hard-coded user.
-- **Rooms**: stable ID and textual room name.
+- **Staff**: stable person identity, display name, normalized Teacher/Administrator/Staff role, active/can-sub flags, `is_school_sub`, nullable standard-period minutes, and persistent imported-name aliases. Multiple School Subs are data, not special hard-coded users.
+- **Rooms**: stable ID, textual room name, and active status. Renames and deactivation preserve schedule history.
 - **ScheduleVersions / ScheduleEntries**: activated, effective-dated normal schedules and their timed blocks.
 - **SpecialSchedules / SpecialScheduleEntries**: one-date overrides and their timed blocks.
 - **Absences**: staff plus inclusive date range and optional time bounds for a single-date partial absence.
@@ -156,9 +156,11 @@ A candidate is automatically available only when a PLAN or Admin block covers th
 
 For each candidate PLAN block overlapped by actual or proposed coverage:
 
-`equivalent = overlap_minutes / plan_block_duration_minutes`
+`equivalent = overlap_minutes / staff_standard_instructional_period_minutes`
 
-Sum equivalents across every affected PLAN block and Assignment segment. Admin blocks provide availability but contribute zero burden. School Sub work contributes zero teacher Plan Periods Lost. The rolling window and threshold come from settings, defaulting to the previous 7 calendar days and 5.0 equivalents. Candidate previews return current, incremental, and projected values.
+An explicit staff value takes precedence. Auto uses the most frequent duration among applicable instructional entries, with the shorter duration winning a tie; it excludes all non-instructional entries. On a Special-only pinned plan, the Special Schedule's instructional entries are the applicable inference source. If no instructional duration exists, the shortest applicable PLAN block is the documented calculation fallback, while Staff management reports Auto as not detected. This avoids treating a merged PLAN block as the denominator whenever normal class evidence exists.
+
+Sum equivalents across every affected PLAN block and Assignment segment. Admin blocks provide availability but contribute zero burden. School Sub work contributes zero teacher Plan Periods Lost. The rolling window and threshold come from settings, defaulting to the previous 7 calendar days and 5.0 equivalents. Candidate previews return current, incremental, and projected values. Workload is derived from current staff configuration, so changing standard-period minutes may change historical rolling results without rewriting historical assignments.
 
 ### Candidate ordering
 
@@ -180,7 +182,7 @@ The `.xlsx` pipeline has explicit stages:
 2. **Parse**: use the school-specific adapter to create normalized candidate staff, rooms, A/B applicability, and timed blocks.
 3. **Stage**: persist the explicit `normal` or `special` import kind, its appropriate date metadata, and parsed candidate records separately from activated schedules.
 4. **Validate**: report recognized staff/rooms/A-B structure, malformed or uninterpretable cells/ranges, conflicts, unmapped names, and stale Default Sub Plan references.
-5. **Map**: let administrators link imported display values to persistent Staff/Room records or intentionally create new records.
+5. **Map**: resolve normalized canonical Staff names, then persistent Staff aliases; let administrators link remaining values to persistent Staff/Room records or intentionally create new records. A manual Staff mapping records a reusable alias when it does not collide.
 6. **Review**: present warnings and blocking errors. Parsing never implies activation.
 7. **Activate**: atomically create the Schedule Version/entries (or Special Schedule/entries), adjust the prior open-ended range when required, and mark the import activated.
 
@@ -308,6 +310,7 @@ The August 2026 vertical-slice pass adds these concrete decisions:
 - The Schedule workspace provides distinct Import Schedule and Add Special Schedule actions over the same parser, staging, identity mapping, and normalized-entry foundation. Unused Special Schedules allow name/date correction and deletion. Once referenced, their date is immutable and they may be archived but not hard-deleted; archived pinned plans continue to load.
 - Plan responses derive an informational warning for each absence that generates no Needs Sub Assignments on the pinned schedule. The client distinguishes this true zero-Assignment state from filters hiding existing Assignments. A plan with a Special Schedule also returns its name so the pinned one-day override is explicit in the header.
 - Candidate previews use an assignment-level evaluation context: active sub-eligible staff, the pinned day's schedule entries, absences, direct coverage, split segments, rolling-window coverage, and the relevant historical PLAN entries are loaded in a bounded set of batch queries. Availability, conflicts, proposed burden, and current burden are then evaluated in memory. The Resolve Sub Need drawer is a separate feature component that renders Assignment/default context immediately, loads recommendations independently, and separates automatically viable recommendations from advisory overrides.
+- Migration `0006_staff_rooms_foundation.sql` removes the single-active-School-Sub unique index, adds nullable positive `standard_period_minutes`, adds globally unique normalized Staff aliases, and indexes candidate configuration. Staff/Room APIs use deactivation rather than deletion. School Sub writes enforce Can Sub, and disabling Can Sub clears School Sub. The Staff & Rooms workspace supplies focused search, add/edit, configuration, aliases, and inactive-record recovery without becoming an HR system.
 
 ## When this document changes
 

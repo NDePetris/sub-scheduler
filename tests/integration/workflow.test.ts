@@ -263,12 +263,16 @@ describe('persisted MVP workflow', () => {
            ('staff_candidate_conflict', 'Candidate Conflict', 'teacher', 1, 1, 0)`,
       ),
       testEnv.DB.prepare(
+        `UPDATE staff SET standard_period_minutes = 50
+          WHERE id = 'staff_candidate_low'`,
+      ),
+      testEnv.DB.prepare(
         `INSERT INTO schedule_entries (
            id, schedule_version_id, staff_id, day_type, start_time, end_time,
            activity_type, category, description, room_id, requires_sub
          ) VALUES
-           ('candidate_plan_0900', 'schedule_2026_fall', 'staff_candidate_plan', 'A', '09:00', '09:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
-           ('candidate_plan_0940', 'schedule_2026_fall', 'staff_candidate_plan', 'A', '09:40', '10:20', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_plan_0900', 'schedule_2026_fall', 'staff_candidate_plan', 'A', '09:00', '10:20', 'plan', 'PLAN_ADMIN', 'Merged PLAN', NULL, 0),
+           ('candidate_plan_0940', 'schedule_2026_fall', 'staff_candidate_plan', 'A', '13:30', '14:10', 'instruction', 'HS', 'Typical 40-minute class', 'room_hs_lab', 0),
            ('candidate_low_0900', 'schedule_2026_fall', 'staff_candidate_low', 'A', '09:00', '09:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
            ('candidate_low_0940', 'schedule_2026_fall', 'staff_candidate_low', 'A', '09:40', '10:20', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
            ('candidate_admin_0900', 'schedule_2026_fall', 'staff_candidate_admin', 'A', '09:00', '10:20', 'admin', 'PLAN_ADMIN', 'Admin', NULL, 0),
@@ -395,6 +399,9 @@ describe('persisted MVP workflow', () => {
       proposedBurden: 0.5,
       projectedBurden: 2,
     });
+    expect(
+      partial.find((candidate) => candidate.id === 'staff_candidate_low'),
+    ).toMatchObject({ proposedBurden: 0.4, projectedBurden: 0.4 });
     expect(threshold).toMatchObject({
       availability: 'plan',
       currentBurden: 4.75,

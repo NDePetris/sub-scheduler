@@ -28,7 +28,7 @@ const bootstrapSchema = z.object({
         entryCount: z.number().int().nonnegative(),
       })
       .nullable(),
-    schoolSub: staffSchema.nullable(),
+    schoolSubs: z.array(staffSchema),
     dayTypeCounts: z.object({
       A: z.number(),
       B: z.number(),
@@ -59,9 +59,27 @@ export interface StaffData {
   readonly isSchoolSub: boolean;
 }
 
+export type StaffRole = 'Teacher' | 'Administrator' | 'Staff';
+
+export interface ManagedStaffData {
+  readonly id: string;
+  readonly displayName: string;
+  readonly role: StaffRole;
+  readonly isActive: boolean;
+  readonly canSub: boolean;
+  readonly isSchoolSub: boolean;
+  readonly standardPeriodMinutes: number | null;
+  readonly inferredStandardPeriodMinutes: number | null;
+  readonly aliases: readonly {
+    readonly id: string;
+    readonly displayValue: string;
+  }[];
+}
+
 export interface RoomData {
   readonly id: string;
   readonly name: string;
+  readonly isActive: boolean;
 }
 
 export interface PlanAssignment {
@@ -273,18 +291,123 @@ export async function getBootstrapData(
   return successEnvelopeSchema.parse(payload).data;
 }
 
-export async function listStaff(signal?: AbortSignal): Promise<StaffData[]> {
-  const result = await apiRequest<{ staff: StaffData[] }>('/api/staff', {
-    signal,
+export async function listStaff(
+  signal?: AbortSignal,
+  includeInactive = false,
+): Promise<ManagedStaffData[]> {
+  const result = await apiRequest<{ staff: ManagedStaffData[] }>(
+    `/api/staff${includeInactive ? '?includeInactive=true' : ''}`,
+    {
+      signal,
+    },
+  );
+  return result.staff;
+}
+
+export async function listRooms(
+  signal?: AbortSignal,
+  includeInactive = false,
+): Promise<RoomData[]> {
+  const result = await apiRequest<{ rooms: RoomData[] }>(
+    `/api/rooms${includeInactive ? '?includeInactive=true' : ''}`,
+    { signal },
+  );
+  return result.rooms;
+}
+
+export interface StaffWriteInput {
+  readonly displayName: string;
+  readonly role: StaffRole;
+  readonly canSub: boolean;
+  readonly isSchoolSub: boolean;
+  readonly standardPeriodMinutes: 40 | 50 | null;
+}
+
+export async function createStaff(
+  input: StaffWriteInput,
+): Promise<ManagedStaffData> {
+  const result = await apiRequest<{ staff: ManagedStaffData }>('/api/staff', {
+    method: 'POST',
+    body: JSON.stringify(input),
   });
   return result.staff;
 }
 
-export async function listRooms(signal?: AbortSignal): Promise<RoomData[]> {
-  const result = await apiRequest<{ rooms: RoomData[] }>('/api/rooms', {
-    signal,
+export async function updateStaff(
+  id: string,
+  input: StaffWriteInput,
+): Promise<ManagedStaffData> {
+  const result = await apiRequest<{ staff: ManagedStaffData }>(
+    `/api/staff/${encodeURIComponent(id)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    },
+  );
+  return result.staff;
+}
+
+export async function setStaffActive(
+  id: string,
+  active: boolean,
+): Promise<ManagedStaffData> {
+  const result = await apiRequest<{ staff: ManagedStaffData }>(
+    `/api/staff/${encodeURIComponent(id)}/${active ? 'reactivate' : 'deactivate'}`,
+    { method: 'POST', body: '{}' },
+  );
+  return result.staff;
+}
+
+export async function addStaffAlias(
+  id: string,
+  displayValue: string,
+): Promise<ManagedStaffData> {
+  const result = await apiRequest<{ staff: ManagedStaffData }>(
+    `/api/staff/${encodeURIComponent(id)}/aliases`,
+    { method: 'POST', body: JSON.stringify({ displayValue }) },
+  );
+  return result.staff;
+}
+
+export async function removeStaffAlias(
+  id: string,
+  aliasId: string,
+): Promise<ManagedStaffData> {
+  const result = await apiRequest<{ staff: ManagedStaffData }>(
+    `/api/staff/${encodeURIComponent(id)}/aliases/${encodeURIComponent(aliasId)}`,
+    { method: 'DELETE' },
+  );
+  return result.staff;
+}
+
+export async function createRoom(name: string): Promise<RoomData> {
+  const result = await apiRequest<{ room: RoomData }>('/api/rooms', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
   });
-  return result.rooms;
+  return result.room;
+}
+
+export async function updateRoom(id: string, name: string): Promise<RoomData> {
+  const result = await apiRequest<{ room: RoomData }>(
+    `/api/rooms/${encodeURIComponent(id)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    },
+  );
+  return result.room;
+}
+
+export async function setRoomActive(
+  id: string,
+  active: boolean,
+): Promise<RoomData> {
+  const result = await apiRequest<{ room: RoomData }>(
+    `/api/rooms/${encodeURIComponent(id)}/${active ? 'reactivate' : 'deactivate'}`,
+    { method: 'POST', body: '{}' },
+  );
+  return result.room;
 }
 
 export async function ensurePlan(

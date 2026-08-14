@@ -37,6 +37,7 @@ describe('initial migration and local seed', () => {
         'schedule_import_rooms',
         'staged_schedule_entries',
         'schedule_import_issues',
+        'staff_aliases',
       ]),
     );
   });

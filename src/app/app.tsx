@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { SubPlanWorkspace } from '@/features/sub-plan/sub-plan-workspace';
 import { ScheduleImportWorkspace } from '@/features/schedule-import/schedule-import-workspace';
+import { StaffRoomsWorkspace } from '@/features/staff-rooms/staff-rooms-workspace';
 import { getBootstrapData, type BootstrapData } from '@/lib/api';
 
 import { ApplicationShell } from './application-shell';
@@ -81,6 +82,8 @@ export function App() {
       </div>
     ) : activeItem.path === '/schedule' ? (
       <ScheduleImportWorkspace />
+    ) : activeItem.path === '/staff-rooms' ? (
+      <StaffRoomsWorkspace onChanged={() => void loadBootstrap()} />
     ) : (
       <SectionPlaceholder item={activeItem} />
     );

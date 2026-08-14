@@ -140,14 +140,76 @@ export interface PlanBlock {
   readonly endTime: string;
 }
 
+export interface StandardPeriodScheduleEntry {
+  readonly dayType: ScheduleDayType;
+  readonly startTime: string;
+  readonly endTime: string;
+  readonly activityType: string;
+}
+
+export function inferStandardPeriodMinutes(
+  entries: readonly StandardPeriodScheduleEntry[],
+  dayType: PlanDayType,
+): number | null {
+  const counts = new Map<number, number>();
+  for (const entry of entries) {
+    if (
+      entry.activityType !== 'instruction' ||
+      !appliesToDay(entry.dayType, dayType)
+    ) {
+      continue;
+    }
+    const duration = intervalDurationMinutes(
+      interval(entry.startTime, entry.endTime),
+    );
+    counts.set(duration, (counts.get(duration) ?? 0) + 1);
+  }
+  return (
+    [...counts.entries()].sort(
+      ([leftDuration, leftCount], [rightDuration, rightCount]) =>
+        rightCount - leftCount || leftDuration - rightDuration,
+    )[0]?.[0] ?? null
+  );
+}
+
+export function resolveStandardPeriodMinutes(input: {
+  readonly configuredMinutes: number | null;
+  readonly dayType: PlanDayType;
+  readonly normalEntries: readonly StandardPeriodScheduleEntry[];
+  readonly applicableEntries?: readonly StandardPeriodScheduleEntry[];
+  readonly fallbackPlanBlocks?: readonly PlanBlock[];
+}): number | null {
+  if (input.configuredMinutes && input.configuredMinutes > 0) {
+    return input.configuredMinutes;
+  }
+  const normal = inferStandardPeriodMinutes(input.normalEntries, input.dayType);
+  if (normal) return normal;
+  const applicable = inferStandardPeriodMinutes(
+    input.applicableEntries ?? [],
+    input.dayType,
+  );
+  if (applicable) return applicable;
+  const fallbackDurations = (input.fallbackPlanBlocks ?? [])
+    .map((block) =>
+      intervalDurationMinutes(interval(block.startTime, block.endTime)),
+    )
+    .filter((duration) => duration > 0)
+    .sort((left, right) => left - right);
+  return fallbackDurations[0] ?? null;
+}
+
 export function calculatePlanPeriodsLost(
   planBlocks: readonly PlanBlock[],
   coverage: readonly CoverageInterval[],
+  standardPeriodMinutes?: number | null,
 ): number {
   let total = 0;
   for (const planBlock of planBlocks) {
     const block = interval(planBlock.startTime, planBlock.endTime);
-    const duration = intervalDurationMinutes(block);
+    const duration =
+      standardPeriodMinutes && standardPeriodMinutes > 0
+        ? standardPeriodMinutes
+        : intervalDurationMinutes(block);
     for (const segment of coverage) {
       total +=
         overlapMinutes(block, interval(segment.startTime, segment.endTime)) /

@@ -1,4 +1,5 @@
 import { shiftSchoolDate } from '../../src/domain/planning';
+import { normalizeIdentityValue } from '../../src/domain/identity';
 import type { ImportIssue } from '../../src/features/schedule-import/types';
 import type { SchoolScheduleCandidate } from '../../src/features/schedule-import/school-schedule-adapter';
 import { HttpError } from '../http';
@@ -137,10 +138,18 @@ export class ImportRepository {
       .first<{ id: string }>();
     if (existing) return this.get(existing.id);
 
-    const [staff, rooms] = await Promise.all([
+    const [staff, staffAliases, rooms] = await Promise.all([
       this.db
         .prepare(
           `SELECT id, display_name AS value FROM staff WHERE is_active = 1`,
+        )
+        .all<IdentityRow>(),
+      this.db
+        .prepare(
+          `SELECT a.staff_id AS id, a.display_value AS value
+             FROM staff_aliases a
+             JOIN staff s ON s.id = a.staff_id
+            WHERE s.is_active = 1`,
         )
         .all<IdentityRow>(),
       this.db
@@ -148,6 +157,11 @@ export class ImportRepository {
         .all<IdentityRow>(),
     ]);
     const staffByName = identityMap(staff.results);
+    for (const alias of staffAliases.results) {
+      if (!staffByName.has(normalize(alias.value))) {
+        staffByName.set(normalize(alias.value), alias);
+      }
+    }
     const roomsByName = identityMap(rooms.results);
     const importId = crypto.randomUUID();
     const recognizedStaff = input.candidate.staffDisplayValues.filter((value) =>
@@ -193,6 +207,10 @@ export class ImportRepository {
 
     for (const value of input.candidate.staffDisplayValues) {
       const match = staffByName.get(normalize(value));
+      const canonicalMatch = staff.results.some(
+        (row) =>
+          row.id === match?.id && normalize(row.value) === normalize(value),
+      );
       statements.push(
         this.db
           .prepare(
@@ -204,7 +222,7 @@ export class ImportRepository {
             importId,
             value,
             match?.id ?? null,
-            match ? 'exact' : 'unmapped',
+            match ? (canonicalMatch ? 'exact' : 'mapped') : 'unmapped',
           ),
       );
     }
@@ -385,6 +403,21 @@ export class ImportRepository {
         'Activated imports cannot be remapped.',
       );
     }
+    const importedMapping =
+      input.kind === 'staff'
+        ? detail.staffMappings.find(
+            (mapping) => mapping.displayValue === input.displayValue,
+          )
+        : detail.roomMappings.find(
+            (mapping) => mapping.displayValue === input.displayValue,
+          );
+    if (!importedMapping) {
+      throw new HttpError(
+        404,
+        'mapping_not_found',
+        'The imported value was not found.',
+      );
+    }
 
     const targetId = input.createNew
       ? await this.createIdentity(input.kind, input.displayValue)
@@ -394,7 +427,7 @@ export class ImportRepository {
         ? 'schedule_import_staff'
         : 'schedule_import_rooms';
     const column = input.kind === 'staff' ? 'staff_id' : 'room_id';
-    const result = await this.db
+    const mapping = this.db
       .prepare(
         `UPDATE ${table} SET ${column} = ?, mapping_status = ?
           WHERE import_id = ? AND display_value = ?`,
@@ -404,9 +437,17 @@ export class ImportRepository {
         input.createNew ? 'created' : 'mapped',
         input.importId,
         input.displayValue,
-      )
-      .run();
-    if (result.meta.changes !== 1) {
+      );
+    const statements: D1PreparedStatement[] = [mapping];
+    if (input.kind === 'staff' && !input.createNew) {
+      const alias = await this.reusableAliasStatement(
+        targetId,
+        input.displayValue,
+      );
+      if (alias) statements.push(alias);
+    }
+    const [result] = await this.db.batch(statements);
+    if (!result || result.meta.changes !== 1) {
       throw new HttpError(
         404,
         'mapping_not_found',
@@ -846,7 +887,13 @@ export class ImportRepository {
     displayValue: string,
   ): Promise<string> {
     const existing = await this.findIdentity(kind, displayValue);
-    if (existing) return existing;
+    if (existing) {
+      throw new HttpError(
+        409,
+        `${kind}_identity_exists`,
+        `That ${kind === 'staff' ? 'staff or schedule' : 'room'} name already exists. Map it to the existing record instead.`,
+      );
+    }
     const id = crypto.randomUUID();
     if (kind === 'staff') {
       await this.db
@@ -894,15 +941,85 @@ export class ImportRepository {
     kind: 'staff' | 'room',
     value: string,
   ): Promise<string | null> {
-    const column = kind === 'staff' ? 'display_name' : 'name';
-    const table = kind === 'staff' ? 'staff' : 'rooms';
-    const row = await this.db
+    const normalized = normalize(value);
+    if (kind === 'staff') {
+      const [staff, alias] = await Promise.all([
+        this.db
+          .prepare(`SELECT id, display_name FROM staff`)
+          .all<{ id: string; display_name: string }>(),
+        this.db
+          .prepare(
+            `SELECT staff_id FROM staff_aliases WHERE normalized_value = ?`,
+          )
+          .bind(normalized)
+          .first<{ staff_id: string }>(),
+      ]);
+      return (
+        staff.results.find((row) => normalize(row.display_name) === normalized)
+          ?.id ??
+        alias?.staff_id ??
+        null
+      );
+    }
+    const rooms = await this.db
+      .prepare(`SELECT id, name FROM rooms`)
+      .all<{ id: string; name: string }>();
+    return (
+      rooms.results.find((row) => normalize(row.name) === normalized)?.id ??
+      null
+    );
+  }
+
+  private async reusableAliasStatement(
+    staffId: string,
+    displayValue: string,
+  ): Promise<D1PreparedStatement | null> {
+    const normalized = normalize(displayValue);
+    const [target, staff, alias] = await Promise.all([
+      this.db
+        .prepare(`SELECT display_name FROM staff WHERE id = ?`)
+        .bind(staffId)
+        .first<{ display_name: string }>(),
+      this.db
+        .prepare(`SELECT id, display_name FROM staff`)
+        .all<{ id: string; display_name: string }>(),
+      this.db
+        .prepare(
+          `SELECT staff_id FROM staff_aliases WHERE normalized_value = ?`,
+        )
+        .bind(normalized)
+        .first<{ staff_id: string }>(),
+    ]);
+    if (!target)
+      throw new HttpError(
+        400,
+        'invalid_mapping_target',
+        'The mapping target is not active.',
+      );
+    if (
+      normalize(target.display_name) === normalized ||
+      alias?.staff_id === staffId
+    )
+      return null;
+    const canonicalOwner = staff.results.find(
+      (row) => normalize(row.display_name) === normalized,
+    )?.id;
+    if (
+      (canonicalOwner && canonicalOwner !== staffId) ||
+      (alias && alias.staff_id !== staffId)
+    ) {
+      throw new HttpError(
+        409,
+        'staff_alias_conflict',
+        'That imported schedule name already belongs to another staff member.',
+      );
+    }
+    return this.db
       .prepare(
-        `SELECT id FROM ${table} WHERE lower(${column}) = lower(?) LIMIT 1`,
+        `INSERT INTO staff_aliases (id, staff_id, display_value, normalized_value)
+         VALUES (?, ?, ?, ?)`,
       )
-      .bind(value)
-      .first<{ id: string }>();
-    return row?.id ?? null;
+      .bind(crypto.randomUUID(), staffId, displayValue.trim(), normalized);
   }
 
   private async refreshStatus(importId: string): Promise<void> {
@@ -935,7 +1052,7 @@ function identityMap(rows: readonly IdentityRow[]): Map<string, IdentityRow> {
 }
 
 function normalize(value: string): string {
-  return value.trim().toLocaleLowerCase('en-US');
+  return normalizeIdentityValue(value);
 }
 
 function toMapping(row: MappingRow) {

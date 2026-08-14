@@ -312,6 +312,8 @@ Room capacity validation is not required.
 
 No student-count field is required anywhere in the application.
 
+Administrators may add, rename, deactivate, and reactivate Rooms. A Room keeps its stable ID across those changes, so historical schedules remain intact. Inactive Rooms are excluded from normal active selectors.
+
 ---
 
 ## 10. Staff Model
@@ -323,7 +325,9 @@ Each staff record contains at minimum:
 - role;
 - active/inactive status;
 - whether the person may sub;
-- whether the person should appear as the **School Sub**.
+- whether the person should appear as a **School Sub**;
+- an optional standard instructional-period duration used for Plan Periods Lost;
+- persistent alternate names used by schedule imports.
 
 ### Default Role
 
@@ -331,7 +335,7 @@ The default staff role is:
 
 **Teacher**
 
-Administrators or other staff types can be explicitly configured as needed.
+Administrator-facing roles are **Teacher**, **Administrator**, and **Staff**. Existing unusual stored roles are presented as Staff until explicitly normalized.
 
 ### School Sub
 
@@ -339,9 +343,11 @@ Use a dedicated flag such as:
 
 `is_school_sub`
 
-to identify staff members who should appear as the School Sub in the planning interface.
+to identify staff members who should appear as School Subs in the planning interface. Zero, one, or multiple active School Subs are permitted. School Sub implies Can Sub; disabling Can Sub clears School Sub.
 
-The School Sub should remain a normal staff record rather than being implemented as a hard-coded system user.
+School Subs remain normal staff records rather than hard-coded system users.
+
+Staff are deactivated instead of deleted. Renames preserve the stable staff ID and normally retain the previous canonical name as an import alias. Aliases affect future normal and Special Schedule matching only; activated schedules and historical Daily Sub Plans are not rewritten.
 
 ---
 
@@ -761,11 +767,13 @@ This information must be prominent whenever an alternate sub is selected.
 
 Use **Plan Period Equivalents**, not number of Assignments.
 
-For every teacher PLAN block affected by subbing:
+For every teacher whose PLAN time is affected by subbing:
 
-`plan-period equivalent = overlapping coverage minutes / normal duration of that PLAN block`
+`plan-period equivalent = coverage minutes overlapping PLAN / staff standard instructional-period minutes`
 
-Calculate separately for every affected PLAN block and sum the result.
+The staff-level setting is Auto, 40 minutes, or 50 minutes. Auto selects the most common applicable instructional block duration; a frequency tie selects the shorter duration deterministically. PLAN, Admin, lunch, duty, after-school, and other non-instructional blocks do not participate in inference. If no instructional duration exists, calculation may fall back to the shortest relevant PLAN block and the UI reports that no instructional value was detected.
+
+Calculate overlap separately across affected PLAN blocks and Assignment segments, using the same standard-period denominator throughout. A merged 80-minute PLAN block therefore counts as 2.00 equivalents for a teacher with a 40-minute standard period.
 
 #### Example
 
@@ -820,6 +828,8 @@ before the administrator makes the assignment.
 ### 19.5 Higher-Level Warning
 
 The Daily Sub Plan must flag when assigned staff are at or above the workload threshold.
+
+Workload remains derived. Changing standard-period configuration may therefore change historical rolling burden; no workload snapshots are persisted.
 
 This warning should be noticeable but not treated as an error.
 

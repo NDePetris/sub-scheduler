@@ -297,5 +297,37 @@ describe('exclusive schedule-source migration', () => {
     for (const statement of orphanedImportChildren) {
       await expect(statement.run()).rejects.toThrow();
     }
+
+    const staffFoundationMigration = testEnv.TEST_MIGRATIONS.filter(
+      (migration) => migration.name === '0006_staff_rooms_foundation.sql',
+    );
+    await applyD1Migrations(testEnv.UPGRADE_DB, staffFoundationMigration);
+    expect(
+      await testEnv.UPGRADE_DB.prepare(
+        `SELECT id, display_name, standard_period_minutes FROM staff WHERE id = 'migration_staff'`,
+      ).first(),
+    ).toEqual({
+      id: 'migration_staff',
+      display_name: 'Fixture Teacher',
+      standard_period_minutes: null,
+    });
+    await testEnv.UPGRADE_DB.batch([
+      testEnv.UPGRADE_DB.prepare(
+        `UPDATE staff SET is_school_sub = 1 WHERE id = 'migration_staff'`,
+      ),
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO staff (id, display_name, is_school_sub)
+         VALUES ('migration_second_sub', 'Second School Sub', 1)`,
+      ),
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO staff_aliases (id, staff_id, display_value, normalized_value)
+         VALUES ('migration_alias', 'migration_staff', 'Teacher, Fixture', 'teacher, fixture')`,
+      ),
+    ]);
+    expect(
+      await testEnv.UPGRADE_DB.prepare(
+        `SELECT COUNT(*) AS count FROM staff WHERE is_school_sub = 1`,
+      ).first(),
+    ).toEqual({ count: 2 });
   });
 });

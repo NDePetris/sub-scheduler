@@ -144,7 +144,9 @@ export function SubPlanFoundation({
               <DataPoint
                 term="School Sub"
                 value={
-                  bootstrap.summary.schoolSub?.displayName ?? 'Not configured'
+                  bootstrap.summary.schoolSubs
+                    .map((staff) => staff.displayName)
+                    .join(', ') || 'Not configured'
                 }
                 detail="Normal Staff record with School Sub flag"
               />

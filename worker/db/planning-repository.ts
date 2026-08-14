@@ -6,6 +6,7 @@ import {
   projectedPlanPeriodsLost,
   rankCandidates,
   renderSubPlanMessage,
+  resolveStandardPeriodMinutes,
   shiftSchoolDate,
   validateSplitSegments,
   type CandidateAvailability,
@@ -121,6 +122,7 @@ interface StaffRow {
   display_name: string;
   role: string;
   is_school_sub: number;
+  standard_period_minutes: number | null;
 }
 
 interface SettingsRow {
@@ -145,6 +147,8 @@ interface WorkloadCoverageRow {
   special_schedule_id: string | null;
   start_time: string;
   end_time: string;
+  standard_period_minutes: number | null;
+  is_school_sub: number;
 }
 
 interface WorkloadPlanEntryRow {
@@ -154,6 +158,7 @@ interface WorkloadPlanEntryRow {
   day_type: 'A' | 'B' | 'ALL';
   start_time: string;
   end_time: string;
+  activity_type: 'instruction' | 'plan';
 }
 
 interface CountRow {
@@ -608,24 +613,26 @@ export class PlanningRepository {
       this.settings(),
     ]);
     const plan = await this.planById(assignment.daily_sub_plan_id);
-    const [staff, entries, absences, assignments, burdens] = await Promise.all([
-      this.db
-        .prepare(
-          `SELECT id, display_name, role, is_school_sub FROM staff
+    const [staff, entries, periodEntries, absences, assignments, burdens] =
+      await Promise.all([
+        this.db
+          .prepare(
+            `SELECT id, display_name, role, is_school_sub, standard_period_minutes FROM staff
             WHERE is_active = 1 AND can_sub = 1 AND id <> ?
             ORDER BY display_name, id`,
-        )
-        .bind(assignment.absent_staff_id)
-        .all<StaffRow>(),
-      this.entriesForPlan(plan),
-      this.absencesForDate(plan.date),
-      this.assignmentsForPlan(plan.id),
-      this.burdensForWindow(
-        plan.date,
-        settings.workload_window_days,
-        assignment.id,
-      ),
-    ]);
+          )
+          .bind(assignment.absent_staff_id)
+          .all<StaffRow>(),
+        this.entriesForPlan(plan),
+        this.periodEntriesForPlan(plan),
+        this.absencesForDate(plan.date),
+        this.assignmentsForPlan(plan.id),
+        this.burdensForWindow(
+          plan.date,
+          settings.workload_window_days,
+          assignment.id,
+        ),
+      ]);
     const segments = await this.segmentsForAssignments(
       assignments.map((item) => item.id),
     );
@@ -647,27 +654,44 @@ export class PlanningRepository {
       const currentBurden = person.is_school_sub
         ? 0
         : (burdens.get(person.id) ?? 0);
+      const planBlocks = entries
+        .filter(
+          (entry) =>
+            entry.staff_id === person.id &&
+            entry.activity_type === 'plan' &&
+            (entry.day_type === 'ALL' || entry.day_type === plan.day_type),
+        )
+        .map((entry) => ({
+          startTime: entry.start_time,
+          endTime: entry.end_time,
+        }));
+      const normalEntries = periodEntries
+        .filter(
+          (entry) =>
+            entry.staff_id === person.id && entry.source_type === 'normal',
+        )
+        .map(periodEntryDto);
+      const applicableEntries = periodEntries
+        .filter((entry) => entry.staff_id === person.id)
+        .map(periodEntryDto);
+      const standardPeriodMinutes = resolveStandardPeriodMinutes({
+        configuredMinutes: person.standard_period_minutes,
+        dayType: plan.day_type,
+        normalEntries,
+        applicableEntries,
+        fallbackPlanBlocks: planBlocks,
+      });
       const proposedBurden = person.is_school_sub
         ? 0
         : calculatePlanPeriodsLost(
-            entries
-              .filter(
-                (entry) =>
-                  entry.staff_id === person.id &&
-                  entry.activity_type === 'plan' &&
-                  (entry.day_type === 'ALL' ||
-                    entry.day_type === plan.day_type),
-              )
-              .map((entry) => ({
-                startTime: entry.start_time,
-                endTime: entry.end_time,
-              })),
+            planBlocks,
             [
               {
                 startTime: assignment.start_time,
                 endTime: assignment.end_time,
               },
             ],
+            standardPeriodMinutes,
           );
       const projectedBurden = projectedPlanPeriodsLost(
         currentBurden,
@@ -870,7 +894,7 @@ export class PlanningRepository {
     const plan = await this.planById(assignment.daily_sub_plan_id);
     const staffRows = await this.db
       .prepare(
-        `SELECT id, display_name, role, is_school_sub FROM staff
+        `SELECT id, display_name, role, is_school_sub, standard_period_minutes FROM staff
           WHERE is_active = 1 AND can_sub = 1`,
       )
       .all<StaffRow>();
@@ -1118,7 +1142,7 @@ export class PlanningRepository {
     }
     const person = await this.db
       .prepare(
-        `SELECT id, display_name, role, is_school_sub FROM staff
+        `SELECT id, display_name, role, is_school_sub, standard_period_minutes FROM staff
           WHERE id = ? AND is_active = 1`,
       )
       .bind(action.assigned_staff_id)
@@ -1204,17 +1228,21 @@ export class PlanningRepository {
       .prepare(
         `SELECT a.assigned_staff_id AS staff_id, p.day_type,
                 p.schedule_version_id, p.special_schedule_id,
-                a.start_time, a.end_time
+                a.start_time, a.end_time, st.standard_period_minutes,
+                st.is_school_sub
            FROM assignments a
            JOIN daily_sub_plans p ON p.id = a.daily_sub_plan_id
+           JOIN staff st ON st.id = a.assigned_staff_id
           WHERE a.assigned_staff_id IS NOT NULL AND a.status = 'assigned'
             AND a.id <> ? AND p.date BETWEEN ? AND ?
           UNION ALL
          SELECT s.staff_id, p.day_type, p.schedule_version_id,
-                p.special_schedule_id, s.start_time, s.end_time
+                p.special_schedule_id, s.start_time, s.end_time,
+                st.standard_period_minutes, st.is_school_sub
            FROM assignment_segments s
            JOIN assignments a ON a.id = s.assignment_id
            JOIN daily_sub_plans p ON p.id = a.daily_sub_plan_id
+           JOIN staff st ON st.id = s.staff_id
           WHERE a.status = 'assigned' AND a.id <> ?
             AND p.date BETWEEN ? AND ?`,
       )
@@ -1232,6 +1260,7 @@ export class PlanningRepository {
     const normalSourceIds = new Set<string>();
     const specialSourceIds = new Set<string>();
     for (const item of coverage.results) {
+      if (item.is_school_sub === 1) continue;
       if (item.schedule_version_id)
         normalSourceIds.add(item.schedule_version_id);
       if (item.special_schedule_id)
@@ -1254,25 +1283,37 @@ export class PlanningRepository {
 
     const burdens = new Map<string, number>();
     for (const item of coverage.results) {
+      if (item.is_school_sub === 1) continue;
       const sourceType = item.special_schedule_id ? 'special' : 'normal';
       const sourceId = item.special_schedule_id ?? item.schedule_version_id;
       if (!sourceId) continue;
-      const blocks = (
+      const sourceEntries =
         entriesByCandidateAndSource.get(
           `${item.staff_id}:${sourceType}:${sourceId}`,
-        ) ?? []
-      )
+        ) ?? [];
+      const blocks = sourceEntries
         .filter(
           (entry) =>
-            entry.day_type === 'ALL' || entry.day_type === item.day_type,
+            entry.activity_type === 'plan' &&
+            (entry.day_type === 'ALL' || entry.day_type === item.day_type),
         )
         .map((entry) => ({
           startTime: entry.start_time,
           endTime: entry.end_time,
         }));
-      const burden = calculatePlanPeriodsLost(blocks, [
-        { startTime: item.start_time, endTime: item.end_time },
-      ]);
+      const standardPeriodMinutes = resolveStandardPeriodMinutes({
+        configuredMinutes: item.standard_period_minutes,
+        dayType: item.day_type,
+        normalEntries:
+          sourceType === 'normal' ? sourceEntries.map(periodEntryDto) : [],
+        applicableEntries: sourceEntries.map(periodEntryDto),
+        fallbackPlanBlocks: blocks,
+      });
+      const burden = calculatePlanPeriodsLost(
+        blocks,
+        [{ startTime: item.start_time, endTime: item.end_time }],
+        standardPeriodMinutes,
+      );
       burdens.set(
         item.staff_id,
         round((burdens.get(item.staff_id) ?? 0) + burden),
@@ -1290,9 +1331,9 @@ export class PlanningRepository {
     if (normalSourceIds.length > 0) {
       queries.push(
         `SELECT 'normal' AS source_type, schedule_version_id AS source_id,
-                staff_id, day_type, start_time, end_time
+                staff_id, day_type, start_time, end_time, activity_type
            FROM schedule_entries
-          WHERE activity_type = 'plan'
+          WHERE activity_type IN ('plan', 'instruction')
             AND schedule_version_id IN (${normalSourceIds.map(() => '?').join(',')})`,
       );
       bindings.push(...normalSourceIds);
@@ -1300,9 +1341,9 @@ export class PlanningRepository {
     if (specialSourceIds.length > 0) {
       queries.push(
         `SELECT 'special' AS source_type, special_schedule_id AS source_id,
-                staff_id, day_type, start_time, end_time
+                staff_id, day_type, start_time, end_time, activity_type
            FROM special_schedule_entries
-          WHERE activity_type = 'plan'
+          WHERE activity_type IN ('plan', 'instruction')
             AND special_schedule_id IN (${specialSourceIds.map(() => '?').join(',')})`,
       );
       bindings.push(...specialSourceIds);
@@ -1313,6 +1354,15 @@ export class PlanningRepository {
       .bind(...bindings)
       .all<WorkloadPlanEntryRow>();
     return result.results;
+  }
+
+  private async periodEntriesForPlan(
+    plan: PlanRow,
+  ): Promise<WorkloadPlanEntryRow[]> {
+    return this.planEntriesForSources(
+      plan.schedule_version_id ? [plan.schedule_version_id] : [],
+      plan.special_schedule_id ? [plan.special_schedule_id] : [],
+    );
   }
 
   private async planSeed(
@@ -1866,6 +1916,15 @@ function parseJson(value: string | null): unknown {
   } catch {
     return null;
   }
+}
+
+function periodEntryDto(entry: WorkloadPlanEntryRow) {
+  return {
+    dayType: entry.day_type,
+    startTime: entry.start_time,
+    endTime: entry.end_time,
+    activityType: entry.activity_type,
+  };
 }
 
 function resolutionLabel(assignment: {
