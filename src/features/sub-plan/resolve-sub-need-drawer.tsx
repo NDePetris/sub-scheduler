@@ -529,6 +529,12 @@ function CandidateCard({
                 Default
               </Badge>
             )}
+            {thresholdWarning && (
+              <Badge className="border-warning/40 bg-warning-soft text-warning-dark">
+                <AlertTriangle className="size-3" aria-hidden="true" />
+                Workload Warning
+              </Badge>
+            )}
           </div>
           <WorkloadSummary candidate={candidate} />
           {candidate.conflicts.map((conflict) => (

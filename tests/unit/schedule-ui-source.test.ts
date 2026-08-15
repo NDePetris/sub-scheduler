@@ -49,6 +49,14 @@ describe('Staff editor terminology source', () => {
     expect(source).toContain('Also recognize');
     expect(source).not.toContain('Can be assigned as a Sub');
   });
+
+  it('renders eligibility controls as accessible switch setting rows', () => {
+    expect(source).toContain('role="switch"');
+    expect(source).toContain('peer-checked:bg-brand');
+    expect(source).toContain('divide-y overflow-hidden rounded-md border');
+    expect(source).toContain('isSchoolSub: canSub ? value.isSchoolSub : false');
+    expect(source).toContain('canSub: isSchoolSub ? true : value.canSub');
+  });
 });
 
 describe('Daily Sub Plan resolution presentation source', () => {
@@ -68,6 +76,22 @@ describe('Daily Sub Plan resolution presentation source', () => {
     expect(drawer).toContain("candidate.availability === 'open'");
     expect(drawer).toContain('candidate.isDefaultCandidate');
     expect(workspace).toContain("assignment.assignedStaff && 'font-semibold'");
+  });
+
+  it('keeps single-assignee source badges inline and shows threshold warnings', () => {
+    expect(workspace).toContain(
+      '<div className="flex flex-wrap items-center gap-1">',
+    );
+    expect(workspace).toMatch(
+      /assignmentLabel\(assignment\)[\s\S]*?assignment\.resolutionSource/,
+    );
+    expect(drawer).toContain('Workload Warning');
+    expect(drawer).toMatch(
+      /candidate\.projectedBurden !== null\s*&&\s*candidate\.projectedBurden >= candidate\.threshold/,
+    );
+    expect(drawer).toContain(
+      'After assignment, {candidate.projectedBurden.toFixed(2)} Plan',
+    );
   });
 });
 

@@ -1026,23 +1026,17 @@ function AssignedCell({ assignment }: { readonly assignment: PlanAssignment }) {
     );
   }
   return (
-    <div>
-      <div
-        className={cn('truncate', assignment.assignedStaff && 'font-semibold')}
-      >
+    <div className="flex flex-wrap items-center gap-1">
+      <span className={cn(assignment.assignedStaff && 'font-semibold')}>
         {assignmentLabel(assignment)}
-      </div>
-      {(assignment.resolutionSource || assignment.isDefault) && (
-        <div className="mt-1 flex flex-wrap gap-1">
-          {assignment.resolutionSource && (
-            <Badge>{assignment.resolutionSource}</Badge>
-          )}
-          {assignment.isDefault && (
-            <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-              Default
-            </Badge>
-          )}
-        </div>
+      </span>
+      {assignment.resolutionSource && (
+        <Badge>{assignment.resolutionSource}</Badge>
+      )}
+      {assignment.isDefault && (
+        <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
+          Default
+        </Badge>
       )}
     </div>
   );

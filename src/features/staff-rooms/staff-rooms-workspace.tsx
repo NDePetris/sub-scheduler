@@ -523,7 +523,7 @@ function StaffEditor({
             <option value="50">50 minutes</option>
           </select>
         </Field>
-        <div className="border-border space-y-3 rounded-md border p-3">
+        <div className="border-border divide-border divide-y overflow-hidden rounded-md border">
           <Toggle
             checked={form.canSub}
             onChange={changeCanSub}
@@ -887,21 +887,26 @@ function Toggle({
   readonly help?: string;
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3">
-      <input
-        type="checkbox"
-        className="mt-0.5 size-4"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-      />
-      <span>
+    <label className="hover:bg-muted/35 flex cursor-pointer items-center justify-between gap-4 px-4 py-3.5">
+      <span className="min-w-0">
         <span className="block text-sm font-semibold">{label}</span>
         {help && (
-          <span className="text-muted-foreground mt-0.5 block text-xs">
+          <span className="text-muted-foreground mt-0.5 block text-xs leading-relaxed">
             {help}
           </span>
         )}
       </span>
+      <input
+        type="checkbox"
+        role="switch"
+        className="peer sr-only"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span
+        aria-hidden="true"
+        className="bg-muted-foreground/35 peer-checked:bg-brand peer-focus-visible:ring-ring relative h-5 w-9 shrink-0 rounded-full transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-offset-2 after:absolute after:top-0.5 after:left-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform after:content-[''] peer-checked:after:translate-x-4"
+      />
     </label>
   );
 }
