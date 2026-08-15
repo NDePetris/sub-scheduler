@@ -86,12 +86,17 @@ export interface RoomData {
 
 export interface PlanAssignment {
   readonly id: string;
+  readonly sourceScheduleEntryId: string | null;
+  readonly sourceSpecialScheduleEntryId: string | null;
   readonly startTime: string;
   readonly endTime: string;
   readonly responsibilityType:
     'instruction' | 'duty' | 'after_school' | 'other';
   readonly description: string;
+  readonly roomId: string | null;
   readonly room: string | null;
+  readonly scheduledRoomId: string | null;
+  readonly scheduledRoom: string | null;
   readonly absentStaff: StaffData;
   readonly assignedStaff: StaffData | null;
   readonly resolutionSource:
@@ -158,6 +163,7 @@ export interface PlanDetail {
     readonly activityType: string;
     readonly category: string;
     readonly description: string;
+    readonly roomId: string | null;
     readonly room: string | null;
   }[];
   readonly summary: {
@@ -465,7 +471,7 @@ export async function getCandidates(
 
 export async function resolveAssignment(
   assignmentId: string,
-  input: Record<string, unknown>,
+  input: AssignmentResolutionInput,
 ): Promise<PlanDetail> {
   const result = await apiRequest<{ detail: PlanDetail }>(
     `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`,
@@ -473,6 +479,45 @@ export async function resolveAssignment(
   );
   return result.detail;
 }
+
+export type AssignmentResolutionInput =
+  | {
+      readonly action: 'assign';
+      readonly staffId: string;
+      readonly assignAnyway: boolean;
+    }
+  | {
+      readonly action: 'leave_uncovered';
+      readonly acknowledged: boolean;
+    }
+  | {
+      readonly action: 'split';
+      readonly segments: readonly {
+        readonly staffId: string;
+        readonly startTime: string;
+        readonly endTime: string;
+      }[];
+      readonly assignAnyway: boolean;
+    }
+  | {
+      readonly action: 'combine_class';
+      readonly receivingScheduleEntryId: string;
+      readonly roomId: string | null;
+      readonly note: string | null;
+      readonly overrideAcknowledged: boolean;
+    }
+  | {
+      readonly action: 'redistribute';
+      readonly receivingStaffIds: readonly string[];
+      readonly roomId: string | null;
+      readonly note: string | null;
+      readonly overrideAcknowledged: boolean;
+    }
+  | {
+      readonly action: 'update_details';
+      readonly roomId: string | null;
+      readonly note: string | null;
+    };
 
 export async function regenerateMessage(date: string): Promise<PlanDetail> {
   const result = await apiRequest<{ detail: PlanDetail }>(
@@ -694,7 +739,8 @@ async function apiRequest<T = unknown>(
     throw new Error('The application API returned an invalid response.');
   if (payload.ok === false) {
     const error = isRecord(payload.error) ? payload.error : null;
-    throw new Error(
+    throw new ApiError(
+      typeof error?.code === 'string' ? error.code : 'request_failed',
       typeof error?.message === 'string'
         ? error.message
         : 'The request failed.',
@@ -704,6 +750,16 @@ async function apiRequest<T = unknown>(
     throw new Error('The application API returned an invalid response.');
   }
   return payload.data as T;
+}
+
+export class ApiError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

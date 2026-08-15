@@ -117,31 +117,54 @@ const specialScheduleConfigurationSchema = z.object({
   name: z.string().trim().min(1).max(120),
   date: dateSchema,
 });
-const resolveSchema = z.object({
-  action: z.enum(['assign', 'leave_uncovered', 'structured', 'split']),
-  staffId: z.string().optional(),
-  assignAnyway: z.boolean().default(false),
-  acknowledged: z.boolean().default(false),
-  resolutionType: z
-    .enum([
-      'redistribution',
-      'switch_groups',
-      'combine_class',
-      'move_room',
-      'manual_override',
-    ])
-    .optional(),
-  details: z.record(z.string(), z.unknown()).default({}),
-  segments: z
-    .array(
+const assignmentNoteSchema = z
+  .string()
+  .trim()
+  .max(500)
+  .nullable()
+  .default(null);
+const assignmentRoomSchema = z.string().min(1).nullable().default(null);
+const resolveSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('assign'),
+    staffId: z.string().min(1),
+    assignAnyway: z.boolean().default(false),
+  }),
+  z.object({
+    action: z.literal('leave_uncovered'),
+    acknowledged: z.boolean().default(false),
+  }),
+  z.object({
+    action: z.literal('split'),
+    assignAnyway: z.boolean().default(false),
+    segments: z.array(
       z.object({
         staffId: z.string().min(1),
         startTime: timeSchema,
         endTime: timeSchema,
       }),
-    )
-    .default([]),
-});
+    ),
+  }),
+  z.object({
+    action: z.literal('combine_class'),
+    receivingScheduleEntryId: z.string().min(1),
+    roomId: assignmentRoomSchema,
+    note: assignmentNoteSchema,
+    overrideAcknowledged: z.boolean().default(false),
+  }),
+  z.object({
+    action: z.literal('redistribute'),
+    receivingStaffIds: z.array(z.string().min(1)).min(2),
+    roomId: assignmentRoomSchema,
+    note: assignmentNoteSchema,
+    overrideAcknowledged: z.boolean().default(false),
+  }),
+  z.object({
+    action: z.literal('update_details'),
+    roomId: assignmentRoomSchema,
+    note: assignmentNoteSchema,
+  }),
+]);
 const messageEditSchema = z.object({ editedText: z.string().max(100_000) });
 const statusSchema = z.object({ status: z.enum(['draft', 'finalized']) });
 const staffRoleSchema = z.enum(STAFF_ROLES);
@@ -628,8 +651,6 @@ export default {
         const assignmentId = decodeURIComponent(resolveMatch[1]);
         let detail;
         if (body.action === 'assign') {
-          if (!body.staffId)
-            throw new HttpError(400, 'staff_required', 'Choose a candidate.');
           detail = await planningRepository.assign(
             assignmentId,
             body.staffId,
@@ -642,18 +663,29 @@ export default {
             body.acknowledged,
             context.actor.id,
           );
-        } else if (body.action === 'structured') {
-          if (!body.resolutionType) {
-            throw new HttpError(
-              400,
-              'resolution_type_required',
-              'Choose a structured resolution type.',
-            );
-          }
-          detail = await planningRepository.structuredResolution(
+        } else if (body.action === 'combine_class') {
+          detail = await planningRepository.combineClass(
             assignmentId,
-            body.resolutionType,
-            body.details,
+            body.receivingScheduleEntryId,
+            body.roomId,
+            body.note,
+            body.overrideAcknowledged,
+            context.actor.id,
+          );
+        } else if (body.action === 'redistribute') {
+          detail = await planningRepository.redistributeClass(
+            assignmentId,
+            body.receivingStaffIds,
+            body.roomId,
+            body.note,
+            body.overrideAcknowledged,
+            context.actor.id,
+          );
+        } else if (body.action === 'update_details') {
+          detail = await planningRepository.updateAssignmentDetails(
+            assignmentId,
+            body.roomId,
+            body.note,
             context.actor.id,
           );
         } else {

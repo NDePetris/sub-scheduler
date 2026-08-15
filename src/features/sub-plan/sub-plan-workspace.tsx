@@ -14,7 +14,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { normalizeToSchoolDay, shiftSchoolDay } from '@/domain/calendar';
 import { isTeacherRole } from '@/domain/staff';
 import { ResolveSubNeedDrawer } from '@/features/sub-plan/resolve-sub-need-drawer';
-import { formatRoomLabel } from '@/features/sub-plan/sub-plan-presentation';
+import {
+  assignmentNote,
+  assignmentResolutionLabel,
+  buildFullScheduleTimeline,
+  formatRoomLabel,
+  type TimelineAbsentOverlay,
+} from '@/features/sub-plan/sub-plan-presentation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -131,6 +137,11 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
             {detail?.plan.status === 'finalized' && (
               <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
                 Finalized
+              </Badge>
+            )}
+            {detail?.plan.status === 'draft' && (
+              <Badge className="border-warning/30 bg-warning-soft text-warning-dark">
+                Planning
               </Badge>
             )}
           </div>
@@ -334,7 +345,7 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
                 />
               </>
             ) : (
-              <FullSchedule detail={detail} />
+              <FullSchedule detail={detail} onOpen={setSelectedAssignmentId} />
             )}
           </section>
         </>
@@ -780,23 +791,34 @@ function ReviewDialog({
   );
 }
 
-function FullSchedule({ detail }: { readonly detail: PlanDetail }) {
-  const rows = [...new Set(detail.schedule.map((entry) => entry.staffId))].map(
-    (staffId) => ({
-      staffId,
-      name:
-        detail.schedule.find((entry) => entry.staffId === staffId)?.staffName ??
-        '',
-      entries: detail.schedule.filter(
-        (entry) =>
-          entry.staffId === staffId &&
-          (entry.dayType === 'ALL' || entry.dayType === detail.plan.dayType),
-      ),
-    }),
-  );
+function FullSchedule({
+  detail,
+  onOpen,
+}: {
+  readonly detail: PlanDetail;
+  readonly onOpen: (assignmentId: string) => void;
+}) {
+  const timeline = useMemo(() => buildFullScheduleTimeline(detail), [detail]);
   return (
     <div className="overflow-x-auto p-4">
       <div className="min-w-[1000px]">
+        <div
+          className="text-muted-foreground mb-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-medium"
+          aria-label="Full Schedule legend"
+        >
+          <LegendItem className="border-slate-300 bg-slate-100">
+            Scheduled
+          </LegendItem>
+          <LegendItem className="border-danger/50 bg-danger-soft">
+            Absent / Needs Sub
+          </LegendItem>
+          <LegendItem className="border-warning/70 bg-warning-soft border-dashed">
+            Planned Coverage
+          </LegendItem>
+          <LegendItem className="border-brand/60 bg-brand-soft">
+            Finalized Coverage
+          </LegendItem>
+        </div>
         <div className="text-muted-foreground mb-2 grid grid-cols-[180px_1fr] text-xs">
           <span>Teacher</span>
           <div className="flex justify-between">
@@ -808,37 +830,85 @@ function FullSchedule({ detail }: { readonly detail: PlanDetail }) {
           </div>
         </div>
         <div className="divide-border border-border divide-y border-y">
-          {rows.map((row) => (
+          {timeline.rows.map((row) => (
             <div
               key={row.staffId}
-              className="grid min-h-12 grid-cols-[180px_1fr]"
+              className="grid min-h-16 grid-cols-[180px_1fr]"
             >
-              <div className="border-border flex items-center border-r pr-3 text-xs font-semibold">
-                {row.name}
+              <div className="border-border flex flex-wrap items-center gap-1.5 border-r pr-3 text-xs font-semibold">
+                {row.staffName}
+                {row.isAbsent && (
+                  <Badge className="border-danger/30 bg-danger-soft text-danger-dark px-1.5 py-0 text-[9px]">
+                    Absent
+                  </Badge>
+                )}
               </div>
               <div className="relative bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px)] bg-[length:25%_100%]">
                 {row.entries.map((entry) => {
-                  const left = ((minutes(entry.startTime) - 480) / 480) * 100;
-                  const width =
-                    ((minutes(entry.endTime) - minutes(entry.startTime)) /
-                      480) *
-                    100;
                   const roomLabel = formatRoomLabel(entry.room);
                   return (
                     <div
                       key={entry.id}
                       title={`${entry.startTime}–${entry.endTime} ${entry.description}`}
                       className={cn(
-                        'absolute top-1 bottom-1 overflow-hidden rounded border px-1 py-0.5 text-[10px] leading-tight',
+                        'absolute top-1 bottom-1 z-0 overflow-hidden rounded border px-1 py-0.5 pb-5 text-[10px] leading-tight',
                         categoryClass(entry.category),
                       )}
-                      style={{ left: `${left}%`, width: `${width}%` }}
+                      style={timelinePosition(entry.startTime, entry.endTime)}
                     >
                       {entry.description}
                       {roomLabel && (
                         <span className="block opacity-70">{roomLabel}</span>
                       )}
                     </div>
+                  );
+                })}
+                {row.absenceOverlays.map((overlay) => (
+                  <button
+                    key={`absence:${overlay.assignmentId}`}
+                    type="button"
+                    onClick={() => onOpen(overlay.assignmentId)}
+                    title={`${overlay.startTime}–${overlay.endTime} ${overlay.label}. Open Resolve Sub Need.`}
+                    aria-label={`${overlay.label}, ${overlay.startTime} to ${overlay.endTime}. Open Resolve Sub Need.`}
+                    className={cn(
+                      'focus:ring-brand absolute bottom-1 z-10 min-h-5 overflow-hidden rounded border px-1 text-left text-[9px] leading-tight font-bold whitespace-nowrap shadow-sm focus:ring-2 focus:outline-none',
+                      absenceOverlayClass(overlay),
+                    )}
+                    style={timelinePosition(overlay.startTime, overlay.endTime)}
+                  >
+                    {overlay.label}
+                  </button>
+                ))}
+                {row.coverageOverlays.map((overlay, index) => {
+                  const sourceText = overlay.source
+                    ? ` · ${overlay.source}`
+                    : '';
+                  return (
+                    <button
+                      key={`coverage:${overlay.assignmentId}:${overlay.startTime}:${index}`}
+                      type="button"
+                      onClick={() => onOpen(overlay.assignmentId)}
+                      title={`${overlay.startTime}–${overlay.endTime} Covering ${overlay.description} for ${overlay.absentStaffName}${sourceText}. Open Resolve Sub Need.`}
+                      aria-label={`Covering ${overlay.description} for ${overlay.absentStaffName}, ${overlay.startTime} to ${overlay.endTime}${sourceText}. Open Resolve Sub Need.`}
+                      className={cn(
+                        'focus:ring-brand absolute top-6 bottom-1 z-20 overflow-hidden rounded border px-1 py-0.5 text-left text-[10px] leading-tight shadow-sm focus:ring-2 focus:outline-none',
+                        overlay.planState === 'planning'
+                          ? 'border-warning/70 bg-warning-soft/95 text-warning-dark border-dashed'
+                          : 'border-brand/60 bg-brand-soft/95 text-brand-dark',
+                      )}
+                      style={timelinePosition(
+                        overlay.startTime,
+                        overlay.endTime,
+                      )}
+                    >
+                      <span className="block truncate font-bold">
+                        Covering {overlay.description}
+                      </span>
+                      <span className="block truncate opacity-80">
+                        for {overlay.absentStaffName} · {overlay.startTime}–
+                        {overlay.endTime}
+                      </span>
+                    </button>
                   );
                 })}
               </div>
@@ -848,6 +918,35 @@ function FullSchedule({ detail }: { readonly detail: PlanDetail }) {
       </div>
     </div>
   );
+}
+
+function LegendItem({
+  className,
+  children,
+}: {
+  readonly className: string;
+  readonly children: React.ReactNode;
+}) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className={cn('size-3 rounded border', className)} />
+      {children}
+    </span>
+  );
+}
+
+function timelinePosition(startTime: string, endTime: string) {
+  const left = ((minutes(startTime) - 480) / 480) * 100;
+  const width = ((minutes(endTime) - minutes(startTime)) / 480) * 100;
+  return { left: `${left}%`, width: `${width}%` };
+}
+
+function absenceOverlayClass(overlay: TimelineAbsentOverlay): string {
+  if (overlay.tone === 'needs-sub')
+    return 'border-danger/60 bg-danger-soft/95 text-danger-dark';
+  if (overlay.tone === 'intentionally-uncovered')
+    return 'border-slate-400 bg-slate-100/95 text-slate-800';
+  return 'border-warning/60 bg-warning-soft/95 text-warning-dark';
 }
 
 function Modal({
@@ -999,7 +1098,7 @@ function Labeled({
   );
 }
 
-function assignmentLabel(assignment: PlanAssignment): string {
+function legacyAssignmentLabel(assignment: PlanAssignment): string {
   if (assignment.assignedStaff) return assignment.assignedStaff.displayName;
   if (assignment.segments.length)
     return assignment.segments.map((segment) => segment.staffName).join(' / ');
@@ -1008,6 +1107,11 @@ function assignmentLabel(assignment: PlanAssignment): string {
   if (assignment.resolutionType)
     return assignment.resolutionType.replaceAll('_', ' ');
   return '—';
+}
+
+function assignmentLabel(assignment: PlanAssignment): string {
+  const label = assignmentResolutionLabel(assignment);
+  return label === 'Assigned' ? legacyAssignmentLabel(assignment) : label;
 }
 
 function AssignedCell({ assignment }: { readonly assignment: PlanAssignment }) {
@@ -1025,18 +1129,32 @@ function AssignedCell({ assignment }: { readonly assignment: PlanAssignment }) {
       </div>
     );
   }
+  const note = assignmentNote(assignment.resolutionDetails);
+  const plannedRoom =
+    assignment.roomId !== assignment.scheduledRoomId
+      ? formatRoomLabel(assignment.room)
+      : null;
   return (
-    <div className="flex flex-wrap items-center gap-1">
-      <span className={cn(assignment.assignedStaff && 'font-semibold')}>
-        {assignmentLabel(assignment)}
-      </span>
-      {assignment.resolutionSource && (
-        <Badge>{assignment.resolutionSource}</Badge>
-      )}
-      {assignment.isDefault && (
-        <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-          Default
-        </Badge>
+    <div className="space-y-0.5">
+      <div className="flex flex-wrap items-center gap-1">
+        <span className={cn(assignment.assignedStaff && 'font-semibold')}>
+          {assignmentLabel(assignment)}
+        </span>
+        {assignment.resolutionSource && (
+          <Badge>{assignment.resolutionSource}</Badge>
+        )}
+        {assignment.isDefault && (
+          <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
+            Default
+          </Badge>
+        )}
+      </div>
+      {(plannedRoom || note) && (
+        <p className="text-muted-foreground text-xs">
+          {[plannedRoom, note ? 'Note added' : null]
+            .filter(Boolean)
+            .join(' · ')}
+        </p>
       )}
     </div>
   );

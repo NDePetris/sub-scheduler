@@ -92,8 +92,14 @@ describe.sequential('exclusive normal or Special Schedule sources', () => {
     );
     const generated = await planning.getPlan('2040-03-15');
     expect(generated.assignments).toEqual([
-      expect.objectContaining({ description: 'Special Day Class' }),
+      expect.objectContaining({
+        description: 'Special Day Class',
+        sourceScheduleEntryId: null,
+      }),
     ]);
+    expect(typeof generated.assignments[0]?.sourceSpecialScheduleEntryId).toBe(
+      'string',
+    );
     const source = await testEnv.DB.prepare(
       `SELECT source_schedule_entry_id, source_special_schedule_entry_id
          FROM assignments WHERE daily_sub_plan_id = ?`,

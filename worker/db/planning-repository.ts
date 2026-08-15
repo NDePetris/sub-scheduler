@@ -85,6 +85,8 @@ interface AssignmentRow {
   id: string;
   daily_sub_plan_id: string;
   absence_id: string;
+  source_schedule_entry_id: string | null;
+  source_special_schedule_entry_id: string | null;
   start_time: string;
   end_time: string;
   responsibility_type: 'instruction' | 'duty' | 'after_school' | 'other';
@@ -278,46 +280,61 @@ export class PlanningRepository {
       list.push(segment);
       segmentMap.set(segment.assignment_id, list);
     }
-    const assignmentDtos = assignments.map((assignment) => ({
-      id: assignment.id,
-      startTime: assignment.start_time,
-      endTime: assignment.end_time,
-      responsibilityType: assignment.responsibility_type,
-      description: assignment.description,
-      room: assignment.room_name,
-      absentStaff: {
-        id: assignment.absent_staff_id,
-        displayName: assignment.absent_staff_name,
-      },
-      assignedStaff: assignment.assigned_staff_id
-        ? {
-            id: assignment.assigned_staff_id,
-            displayName: assignment.assigned_staff_name ?? '',
-          }
-        : null,
-      resolutionSource: resolutionSource(assignment, schedule, plan.day_type),
-      resolutionType: assignment.resolution_type,
-      resolutionDetails: parseJson(assignment.resolution_details_json),
-      status: assignment.status,
-      isDefault: assignment.is_default === 1,
-      conflictExplanation: assignment.conflict_explanation,
-      defaultAction: assignment.default_action_id
-        ? {
-            id: assignment.default_action_id,
-            actionType: assignment.default_action_type,
-            staffId: assignment.default_staff_id,
-            staffName: assignment.default_staff_name,
-            details: parseJson(assignment.default_details_json),
-          }
-        : null,
-      segments: (segmentMap.get(assignment.id) ?? []).map((segment) => ({
-        id: segment.id,
-        startTime: segment.start_time,
-        endTime: segment.end_time,
-        staffId: segment.staff_id,
-        staffName: segment.staff_name,
-      })),
-    }));
+    const scheduleById = new Map(schedule.map((entry) => [entry.id, entry]));
+    const assignmentDtos = assignments.map((assignment) => {
+      const sourceEntryId = plan.special_schedule_id
+        ? assignment.source_special_schedule_entry_id
+        : assignment.source_schedule_entry_id;
+      const sourceEntry = sourceEntryId
+        ? scheduleById.get(sourceEntryId)
+        : undefined;
+      return {
+        id: assignment.id,
+        sourceScheduleEntryId: assignment.source_schedule_entry_id,
+        sourceSpecialScheduleEntryId:
+          assignment.source_special_schedule_entry_id,
+        startTime: assignment.start_time,
+        endTime: assignment.end_time,
+        responsibilityType: assignment.responsibility_type,
+        description: assignment.description,
+        roomId: assignment.room_id,
+        room: assignment.room_name,
+        scheduledRoomId: sourceEntry?.room_id ?? null,
+        scheduledRoom: sourceEntry?.room_name ?? null,
+        absentStaff: {
+          id: assignment.absent_staff_id,
+          displayName: assignment.absent_staff_name,
+        },
+        assignedStaff: assignment.assigned_staff_id
+          ? {
+              id: assignment.assigned_staff_id,
+              displayName: assignment.assigned_staff_name ?? '',
+            }
+          : null,
+        resolutionSource: resolutionSource(assignment, schedule, plan.day_type),
+        resolutionType: assignment.resolution_type,
+        resolutionDetails: parseJson(assignment.resolution_details_json),
+        status: assignment.status,
+        isDefault: assignment.is_default === 1,
+        conflictExplanation: assignment.conflict_explanation,
+        defaultAction: assignment.default_action_id
+          ? {
+              id: assignment.default_action_id,
+              actionType: assignment.default_action_type,
+              staffId: assignment.default_staff_id,
+              staffName: assignment.default_staff_name,
+              details: parseJson(assignment.default_details_json),
+            }
+          : null,
+        segments: (segmentMap.get(assignment.id) ?? []).map((segment) => ({
+          id: segment.id,
+          startTime: segment.start_time,
+          endTime: segment.end_time,
+          staffId: segment.staff_id,
+          staffName: segment.staff_name,
+        })),
+      };
+    });
     const assigned = assignmentDtos.filter(
       (assignment) => assignment.status !== 'unresolved',
     ).length;
@@ -385,6 +402,7 @@ export class PlanningRepository {
         activityType: entry.activity_type,
         category: entry.category,
         description: entry.description,
+        roomId: entry.room_id,
         room: entry.room_name,
       })),
       summary: {
@@ -602,7 +620,7 @@ export class PlanningRepository {
               affectedEntry.endTime,
               responsibilityType(source.activity_type),
               source.description,
-              source.room_id,
+              defaultAction?.room_id ?? source.room_id,
               defaultAction?.id ?? null,
               defaultResolution?.assignedStaffId ?? null,
               defaultResolution?.resolutionType ?? null,
@@ -784,6 +802,9 @@ export class PlanningRepository {
     }
     const assignment = await this.assignmentById(assignmentId);
     await this.assertDraft(assignment.daily_sub_plan_id);
+    const noteDetailsJson = noteOnlyDetailsJson(
+      assignment.resolution_details_json,
+    );
     const now = new Date().toISOString();
     await this.db.batch([
       this.db
@@ -792,7 +813,7 @@ export class PlanningRepository {
       this.db
         .prepare(
           `UPDATE assignments
-              SET assigned_staff_id = ?, resolution_type = ?, resolution_details_json = NULL,
+              SET assigned_staff_id = ?, resolution_type = ?, resolution_details_json = ?,
                   status = 'assigned', is_default = ?, conflict_explanation = NULL,
                   override_acknowledged_at = ?, override_acknowledged_by = ?,
                   updated_by = ?, updated_at = ?
@@ -805,6 +826,7 @@ export class PlanningRepository {
             : assignment.responsibility_type === 'duty'
               ? 'duty_coverage'
               : 'teacher_cover',
+          noteDetailsJson,
           assignment.default_staff_id === staffId ? 1 : 0,
           candidate.conflicts.length > 0 ? now : null,
           candidate.conflicts.length > 0 ? actorId : null,
@@ -832,6 +854,9 @@ export class PlanningRepository {
         'Instructional Assignments require explicit acknowledgement before being left uncovered.',
       );
     }
+    const noteDetailsJson = noteOnlyDetailsJson(
+      assignment.resolution_details_json,
+    );
     const now = new Date().toISOString();
     await this.db.batch([
       this.db
@@ -841,13 +866,14 @@ export class PlanningRepository {
         .prepare(
           `UPDATE assignments
               SET assigned_staff_id = NULL, resolution_type = 'intentional_uncovered',
-                  resolution_details_json = NULL, status = 'intentionally_uncovered',
+                  resolution_details_json = ?, status = 'intentionally_uncovered',
                   is_default = ?,
                   conflict_explanation = NULL, override_acknowledged_at = ?,
                   override_acknowledged_by = ?, updated_by = ?, updated_at = ?
             WHERE id = ?`,
         )
         .bind(
+          noteDetailsJson,
           assignment.default_action_type === 'leave_uncovered' ? 1 : 0,
           assignment.responsibility_type === 'instruction' ? now : null,
           assignment.responsibility_type === 'instruction' ? actorId : null,
@@ -861,19 +887,75 @@ export class PlanningRepository {
     );
   }
 
-  async structuredResolution(
+  async combineClass(
     assignmentId: string,
-    resolutionType:
-      | 'redistribution'
-      | 'switch_groups'
-      | 'combine_class'
-      | 'move_room'
-      | 'manual_override',
-    details: Record<string, unknown>,
+    receivingScheduleEntryId: string,
+    roomId: string | null,
+    note: string | null,
+    overrideAcknowledged: boolean,
     actorId: string,
   ) {
     const assignment = await this.assignmentById(assignmentId);
     await this.assertDraft(assignment.daily_sub_plan_id);
+    if (assignment.responsibility_type !== 'instruction') {
+      throw new HttpError(
+        400,
+        'combine_requires_instruction',
+        'Only instructional Assignments can be combined with another class.',
+      );
+    }
+    const plan = await this.planById(assignment.daily_sub_plan_id);
+    const entries = await this.entriesForPlan(plan);
+    const receivingEntry = entries.find(
+      (entry) => entry.id === receivingScheduleEntryId,
+    );
+    if (
+      !receivingEntry ||
+      (receivingEntry.day_type !== 'ALL' &&
+        receivingEntry.day_type !== plan.day_type) ||
+      receivingEntry.activity_type !== 'instruction' ||
+      receivingEntry.staff_id === assignment.absent_staff_id ||
+      receivingEntry.start_time >= assignment.end_time ||
+      assignment.start_time >= receivingEntry.end_time
+    ) {
+      throw new HttpError(
+        400,
+        'invalid_combine_target',
+        'Choose a concurrent instructional responsibility for another active staff member.',
+      );
+    }
+    const receivingStaff = await this.activeStaff(receivingEntry.staff_id);
+    const check = await this.candidateCheck(
+      plan,
+      receivingStaff,
+      assignment.start_time,
+      assignment.end_time,
+      assignmentId,
+    );
+    const conflicts = check.conflicts.filter(
+      (message) => !message.startsWith('Scheduled conflict:'),
+    );
+    if (conflicts.length > 0 && !overrideAcknowledged) {
+      throw new HttpError(
+        409,
+        'override_acknowledgement_required',
+        conflicts.join(' '),
+      );
+    }
+    const plannedRoomId = await this.resolvePlannedRoomId(
+      assignment,
+      plan,
+      roomId,
+    );
+    const details = compactDetails({
+      receivingScheduleEntryId: receivingEntry.id,
+      receivingStaffId: receivingEntry.staff_id,
+      receivingStaffName: receivingEntry.staff_name,
+      receivingDescription: receivingEntry.description,
+      receivingStartTime: receivingEntry.start_time,
+      receivingEndTime: receivingEntry.end_time,
+      note,
+    });
     const now = new Date().toISOString();
     await this.db.batch([
       this.db
@@ -882,23 +964,166 @@ export class PlanningRepository {
       this.db
         .prepare(
           `UPDATE assignments
-              SET assigned_staff_id = NULL, resolution_type = ?, resolution_details_json = ?,
-                  status = 'assigned', is_default = 0, conflict_explanation = NULL,
-                  override_acknowledged_at = NULL, override_acknowledged_by = NULL,
+              SET assigned_staff_id = NULL, resolution_type = 'combine_class',
+                  resolution_details_json = ?, room_id = ?, status = 'assigned',
+                  is_default = 0, conflict_explanation = NULL,
+                  override_acknowledged_at = ?, override_acknowledged_by = ?,
                   updated_by = ?, updated_at = ?
             WHERE id = ?`,
         )
         .bind(
-          resolutionType,
           JSON.stringify(details),
+          plannedRoomId,
+          conflicts.length > 0 ? now : null,
+          conflicts.length > 0 ? actorId : null,
           actorId,
           now,
           assignmentId,
         ),
     ]);
-    return this.getPlan(
-      (await this.planById(assignment.daily_sub_plan_id)).date,
+    return this.getPlan(plan.date);
+  }
+
+  async redistributeClass(
+    assignmentId: string,
+    receivingStaffIds: readonly string[],
+    roomId: string | null,
+    note: string | null,
+    overrideAcknowledged: boolean,
+    actorId: string,
+  ) {
+    const assignment = await this.assignmentById(assignmentId);
+    await this.assertDraft(assignment.daily_sub_plan_id);
+    if (assignment.responsibility_type !== 'instruction') {
+      throw new HttpError(
+        400,
+        'redistribution_requires_instruction',
+        'Only instructional Assignments can be redistributed.',
+      );
+    }
+    const uniqueIds = [...new Set(receivingStaffIds)];
+    if (uniqueIds.length !== receivingStaffIds.length) {
+      throw new HttpError(
+        400,
+        'duplicate_redistribution_recipient',
+        'Choose each redistribution recipient only once.',
+      );
+    }
+    if (uniqueIds.length < 2) {
+      throw new HttpError(
+        400,
+        'redistribution_recipients_required',
+        'Choose at least two receiving staff members.',
+      );
+    }
+    if (uniqueIds.includes(assignment.absent_staff_id)) {
+      throw new HttpError(
+        400,
+        'absent_staff_cannot_receive',
+        'The absent staff member cannot receive their own class.',
+      );
+    }
+    const plan = await this.planById(assignment.daily_sub_plan_id);
+    const recipients: StaffRow[] = [];
+    const conflicts: string[] = [];
+    for (const staffId of uniqueIds) {
+      const recipient = await this.activeStaff(staffId);
+      recipients.push(recipient);
+      const check = await this.candidateCheck(
+        plan,
+        recipient,
+        assignment.start_time,
+        assignment.end_time,
+        assignmentId,
+      );
+      conflicts.push(
+        ...check.conflicts.map(
+          (message) => `${recipient.display_name}: ${message}`,
+        ),
+      );
+    }
+    if (conflicts.length > 0 && !overrideAcknowledged) {
+      throw new HttpError(
+        409,
+        'override_acknowledgement_required',
+        conflicts.join(' '),
+      );
+    }
+    const plannedRoomId = await this.resolvePlannedRoomId(
+      assignment,
+      plan,
+      roomId,
     );
+    const details = compactDetails({
+      receivingStaffIds: recipients.map((recipient) => recipient.id),
+      receivingStaffNames: recipients.map(
+        (recipient) => recipient.display_name,
+      ),
+      allocation: 'equal',
+      note,
+    });
+    const now = new Date().toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(`DELETE FROM assignment_segments WHERE assignment_id = ?`)
+        .bind(assignmentId),
+      this.db
+        .prepare(
+          `UPDATE assignments
+              SET assigned_staff_id = NULL, resolution_type = 'redistribution',
+                  resolution_details_json = ?, room_id = ?, status = 'assigned',
+                  is_default = 0, conflict_explanation = NULL,
+                  override_acknowledged_at = ?, override_acknowledged_by = ?,
+                  updated_by = ?, updated_at = ?
+            WHERE id = ?`,
+        )
+        .bind(
+          JSON.stringify(details),
+          plannedRoomId,
+          conflicts.length > 0 ? now : null,
+          conflicts.length > 0 ? actorId : null,
+          actorId,
+          now,
+          assignmentId,
+        ),
+    ]);
+    return this.getPlan(plan.date);
+  }
+
+  async updateAssignmentDetails(
+    assignmentId: string,
+    roomId: string | null,
+    note: string | null,
+    actorId: string,
+  ) {
+    const assignment = await this.assignmentById(assignmentId);
+    await this.assertDraft(assignment.daily_sub_plan_id);
+    const plan = await this.planById(assignment.daily_sub_plan_id);
+    const plannedRoomId = await this.resolvePlannedRoomId(
+      assignment,
+      plan,
+      roomId,
+    );
+    const currentDetails = assignment.resolution_type
+      ? detailsRecord(assignment.resolution_details_json)
+      : {};
+    const details = compactDetails({ ...currentDetails, note });
+    const now = new Date().toISOString();
+    await this.db
+      .prepare(
+        `UPDATE assignments
+            SET room_id = ?, resolution_details_json = ?, updated_by = ?, updated_at = ?
+          WHERE id = ?`,
+      )
+      .bind(
+        plannedRoomId,
+        Object.keys(details).length > 0 ? JSON.stringify(details) : null,
+        actorId,
+        now,
+        assignmentId,
+      )
+      .run();
+    return this.getPlan(plan.date);
   }
 
   async split(
@@ -958,6 +1183,9 @@ export class PlanningRepository {
         conflicts.join(' '),
       );
     }
+    const noteDetailsJson = noteOnlyDetailsJson(
+      assignment.resolution_details_json,
+    );
     const now = new Date().toISOString();
     const statements: D1PreparedStatement[] = [
       this.db
@@ -987,12 +1215,13 @@ export class PlanningRepository {
         .prepare(
           `UPDATE assignments
               SET assigned_staff_id = NULL, resolution_type = 'split_coverage',
-                  resolution_details_json = NULL, status = 'assigned', is_default = 0,
+                  resolution_details_json = ?, status = 'assigned', is_default = 0,
                   conflict_explanation = NULL, override_acknowledged_at = ?,
                   override_acknowledged_by = ?, updated_by = ?, updated_at = ?
             WHERE id = ?`,
         )
         .bind(
+          noteDetailsJson,
           conflicts.length > 0 ? now : null,
           conflicts.length > 0 ? actorId : null,
           actorId,
@@ -1149,6 +1378,17 @@ export class PlanningRepository {
       endTime: string | null;
     },
   ) {
+    if (action.action_type === 'move_room') {
+      return {
+        assignedStaffId: null,
+        resolutionType: null,
+        detailsJson: action.details_json,
+        status: 'unresolved',
+        isDefault: false,
+        conflict:
+          'The Default Sub Plan room was applied, but this Assignment still needs a primary resolution.',
+      };
+    }
     if (action.action_type === 'leave_uncovered') {
       return {
         assignedStaffId: null,
@@ -1246,6 +1486,48 @@ export class PlanningRepository {
         segments,
       },
     );
+  }
+
+  private async activeStaff(staffId: string): Promise<StaffRow> {
+    const staff = await this.db
+      .prepare(
+        `SELECT id, display_name, role, is_school_sub, standard_period_minutes
+           FROM staff WHERE id = ? AND is_active = 1`,
+      )
+      .bind(staffId)
+      .first<StaffRow>();
+    if (!staff) {
+      throw new HttpError(
+        400,
+        'invalid_recipient',
+        'Choose an active receiving staff member.',
+      );
+    }
+    return staff;
+  }
+
+  private async resolvePlannedRoomId(
+    assignment: AssignmentRow,
+    plan: PlanRow,
+    requestedRoomId: string | null,
+  ): Promise<string | null> {
+    if (requestedRoomId) {
+      const room = await this.db
+        .prepare(`SELECT id FROM rooms WHERE id = ? AND is_active = 1`)
+        .bind(requestedRoomId)
+        .first<{ id: string }>();
+      if (!room) {
+        throw new HttpError(400, 'invalid_room', 'Choose an active Room.');
+      }
+      return room.id;
+    }
+    const sourceEntryId = plan.special_schedule_id
+      ? assignment.source_special_schedule_entry_id
+      : assignment.source_schedule_entry_id;
+    const sourceEntry = (await this.entriesForPlan(plan)).find(
+      (entry) => entry.id === sourceEntryId,
+    );
+    return sourceEntry?.room_id ?? null;
   }
 
   private async burdensForWindow(
@@ -1592,7 +1874,9 @@ export class PlanningRepository {
   private async assignmentsForPlan(planId: string): Promise<AssignmentRow[]> {
     const result = await this.db
       .prepare(
-        `SELECT a.id, a.daily_sub_plan_id, a.absence_id, a.start_time, a.end_time,
+        `SELECT a.id, a.daily_sub_plan_id, a.absence_id,
+                a.source_schedule_entry_id, a.source_special_schedule_entry_id,
+                a.start_time, a.end_time,
                 a.responsibility_type, a.description, a.room_id, r.name AS room_name,
                 a.default_action_id, da.action_type AS default_action_type,
                 da.assigned_staff_id AS default_staff_id,
@@ -1621,7 +1905,9 @@ export class PlanningRepository {
   private async assignmentById(id: string): Promise<AssignmentRow> {
     const result = await this.db
       .prepare(
-        `SELECT a.id, a.daily_sub_plan_id, a.absence_id, a.start_time, a.end_time,
+        `SELECT a.id, a.daily_sub_plan_id, a.absence_id,
+                a.source_schedule_entry_id, a.source_special_schedule_entry_id,
+                a.start_time, a.end_time,
                 a.responsibility_type, a.description, a.room_id, r.name AS room_name,
                 a.default_action_id, da.action_type AS default_action_type,
                 da.assigned_staff_id AS default_staff_id,
@@ -1959,6 +2245,30 @@ function parseJson(value: string | null): unknown {
   }
 }
 
+function detailsRecord(value: string | null): Record<string, unknown> {
+  const parsed = parseJson(value);
+  return typeof parsed === 'object' && parsed && !Array.isArray(parsed)
+    ? { ...parsed }
+    : {};
+}
+
+function compactDetails(
+  details: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(details).filter(
+      ([, value]) => value !== null && value !== undefined && value !== '',
+    ),
+  );
+}
+
+function noteOnlyDetailsJson(value: string | null): string | null {
+  const note = detailsRecord(value).note;
+  return typeof note === 'string' && note.trim()
+    ? JSON.stringify({ note: note.trim() })
+    : null;
+}
+
 function periodEntryDto(entry: WorkloadPlanEntryRow) {
   return {
     dayType: entry.day_type,
@@ -1968,7 +2278,7 @@ function periodEntryDto(entry: WorkloadPlanEntryRow) {
   };
 }
 
-function resolutionLabel(assignment: {
+function legacyResolutionLabel(assignment: {
   readonly assignedStaff: { displayName: string } | null;
   readonly status: string;
   readonly resolutionType: string | null;
@@ -1978,6 +2288,9 @@ function resolutionLabel(assignment: {
     staffName: string;
   }[];
   readonly resolutionDetails: unknown;
+  readonly roomId: string | null;
+  readonly room: string | null;
+  readonly scheduledRoomId: string | null;
 }): string {
   if (assignment.status === 'intentionally_uncovered')
     return 'Intentionally Uncovered';
@@ -1999,6 +2312,81 @@ function resolutionLabel(assignment: {
     return `${assignment.resolutionType.replaceAll('_', ' ')}${detailText}`;
   }
   return 'Unresolved';
+}
+
+function resolutionLabel(
+  assignment: Parameters<typeof legacyResolutionLabel>[0],
+): string {
+  const details = unknownRecord(assignment.resolutionDetails);
+  const note = stringDetail(details, 'note');
+  const withNote = (label: string) => (note ? `${label} Note: ${note}` : label);
+  const room = plannedMessageRoom(assignment);
+  if (assignment.resolutionType === 'combine_class') {
+    const target = [
+      stringDetail(details, 'receivingStaffName'),
+      stringDetail(details, 'receivingDescription'),
+    ]
+      .filter(Boolean)
+      .join(' — ');
+    return withNote(
+      `Combined${target ? ` with ${target}` : ' Class'}${room ? ` in ${room}` : ''}.`,
+    );
+  }
+  if (assignment.resolutionType === 'redistribution') {
+    const recipients = formatNameList(
+      stringArrayDetail(details, 'receivingStaffNames'),
+    );
+    return withNote(
+      `Redistributed${recipients ? ` to ${recipients}` : ''}${room ? ` in ${room}` : ''}.`,
+    );
+  }
+  if (assignment.assignedStaff) {
+    return withNote(
+      `${assignment.assignedStaff.displayName}${room ? ` in ${room}` : ''}.`,
+    );
+  }
+  return withNote(legacyResolutionLabel(assignment));
+}
+
+function unknownRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function stringDetail(details: Record<string, unknown>, key: string): string {
+  const value = details[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function stringArrayDetail(
+  details: Record<string, unknown>,
+  key: string,
+): string[] {
+  const value = details[key];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
+function formatNameList(names: readonly string[]): string {
+  if (names.length < 2) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+function formatMessageRoom(room: string | null): string {
+  if (!room) return '';
+  return /^room\b/i.test(room) ? room : `Room ${room}`;
+}
+
+function plannedMessageRoom(
+  assignment: Pick<
+    Parameters<typeof legacyResolutionLabel>[0],
+    'roomId' | 'room' | 'scheduledRoomId'
+  >,
+): string {
+  if (assignment.roomId === assignment.scheduledRoomId) return '';
+  return formatMessageRoom(assignment.room);
 }
 
 function round(value: number): number {

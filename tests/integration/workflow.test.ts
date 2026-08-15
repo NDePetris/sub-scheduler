@@ -169,6 +169,410 @@ describe('persisted MVP workflow', () => {
     expect(reopenedRegenerate.response.status).toBe(200);
   });
 
+  it('keeps Room and Note as modifiers while Combine resolves and direct assignment clears Combine details', async () => {
+    const date = '2026-12-02';
+    await api('/api/plans/ensure', 'POST', { date, dayType: 'A' });
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_jordan_kim',
+      startDate: date,
+      endDate: date,
+      startTime: null,
+      endTime: null,
+    });
+    const initial = data<{
+      detail: { assignments: Array<{ id: string; startTime: string }> };
+    }>((await api(`/api/plans/${date}`)).payload).detail;
+    const assignmentId = initial.assignments.find(
+      (assignment) => assignment.startTime === '08:00',
+    )!.id;
+
+    expect(
+      (
+        await api(
+          `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`,
+          'POST',
+          {
+            action: 'structured',
+            resolutionType: 'move_room',
+            details: {},
+          },
+        )
+      ).response.status,
+    ).toBe(400);
+
+    for (const details of [
+      { roomId: null, note: 'Context only.' },
+      { roomId: 'room_int_301', note: null },
+    ]) {
+      const modifierOnly = await api(
+        `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`,
+        'POST',
+        { action: 'update_details', ...details },
+      );
+      expect(
+        data<{
+          detail: { assignments: Array<Record<string, unknown>> };
+        }>(modifierOnly.payload).detail.assignments.find(
+          (assignment) => assignment.id === assignmentId,
+        ),
+      ).toMatchObject({ status: 'unresolved', resolutionType: null });
+    }
+
+    const detailsOnly = await api(
+      `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`,
+      'POST',
+      {
+        action: 'update_details',
+        roomId: 'room_int_301',
+        note: 'Students join after morning meeting.',
+      },
+    );
+    const unresolved = data<{
+      detail: {
+        assignments: Array<Record<string, unknown>>;
+        summary: { unresolved: number };
+      };
+    }>(detailsOnly.payload).detail;
+    expect(
+      unresolved.assignments.find(
+        (assignment) => assignment.id === assignmentId,
+      ),
+    ).toMatchObject({
+      status: 'unresolved',
+      resolutionType: null,
+      roomId: 'room_int_301',
+      scheduledRoomId: 'room_el_204',
+      resolutionDetails: { note: 'Students join after morning meeting.' },
+    });
+
+    const combined = await api(
+      `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`,
+      'POST',
+      {
+        action: 'combine_class',
+        receivingScheduleEntryId: 'entry_avery_a_0800',
+        roomId: 'room_pri_101',
+        note: 'Students join after morning meeting.',
+        overrideAcknowledged: false,
+      },
+    );
+    expect(combined.response.status).toBe(200);
+    const combinedAssignment = data<{
+      detail: { assignments: Array<Record<string, unknown>> };
+    }>(combined.payload).detail.assignments.find(
+      (assignment) => assignment.id === assignmentId,
+    );
+    expect(combinedAssignment).toMatchObject({
+      status: 'assigned',
+      resolutionType: 'combine_class',
+      roomId: 'room_pri_101',
+      resolutionDetails: {
+        receivingScheduleEntryId: 'entry_avery_a_0800',
+        receivingStaffId: 'staff_avery_bennett',
+        receivingStaffName: 'Avery Bennett',
+        receivingDescription: 'Primary Literacy',
+        note: 'Students join after morning meeting.',
+      },
+    });
+
+    const resetRoom = await api(
+      `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`,
+      'POST',
+      {
+        action: 'update_details',
+        roomId: null,
+        note: 'Students join after morning meeting.',
+      },
+    );
+    expect(
+      data<{
+        detail: { assignments: Array<Record<string, unknown>> };
+      }>(resetRoom.payload).detail.assignments.find(
+        (assignment) => assignment.id === assignmentId,
+      ),
+    ).toMatchObject({
+      status: 'assigned',
+      resolutionType: 'combine_class',
+      roomId: 'room_el_204',
+    });
+
+    const direct = await api(
+      `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`,
+      'POST',
+      {
+        action: 'assign',
+        staffId: 'staff_riley_quinn',
+        assignAnyway: false,
+      },
+    );
+    const directAssignment = data<{
+      detail: { assignments: Array<Record<string, unknown>> };
+    }>(direct.payload).detail.assignments.find(
+      (assignment) => assignment.id === assignmentId,
+    );
+    expect(directAssignment).toMatchObject({
+      status: 'assigned',
+      assignedStaff: { id: 'staff_riley_quinn' },
+      resolutionDetails: { note: 'Students join after morning meeting.' },
+    });
+    expect(directAssignment?.resolutionDetails).not.toHaveProperty(
+      'receivingScheduleEntryId',
+    );
+
+    const directWithRoom = await api(
+      `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`,
+      'POST',
+      {
+        action: 'update_details',
+        roomId: 'room_int_301',
+        note: 'Students join after morning meeting.',
+      },
+    );
+    expect(
+      data<{
+        detail: { assignments: Array<Record<string, unknown>> };
+      }>(directWithRoom.payload).detail.assignments.find(
+        (assignment) => assignment.id === assignmentId,
+      ),
+    ).toMatchObject({
+      status: 'assigned',
+      assignedStaff: { id: 'staff_riley_quinn' },
+      roomId: 'room_int_301',
+    });
+
+    const message = await api(
+      `/api/plans/${date}/message/regenerate`,
+      'POST',
+      {},
+    );
+    expect(
+      data<{ detail: { message: { editedText: string } } }>(message.payload)
+        .detail.message.editedText,
+    ).toContain(
+      'Riley Quinn in Room INT-301. Note: Students join after morning meeting.',
+    );
+  });
+
+  it('validates Redistribution recipients and requires acknowledgement for recipient conflicts', async () => {
+    const date = '2026-12-03';
+    await api('/api/plans/ensure', 'POST', { date, dayType: 'A' });
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_jordan_kim',
+      startDate: date,
+      endDate: date,
+      startTime: null,
+      endTime: null,
+    });
+    const assignments = data<{
+      detail: { assignments: Array<{ id: string; startTime: string }> };
+    }>((await api(`/api/plans/${date}`)).payload).detail.assignments;
+    const assignmentId = assignments.find(
+      (assignment) => assignment.startTime === '08:00',
+    )!.id;
+    const path = `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`;
+
+    expect(
+      (
+        await api(path, 'POST', {
+          action: 'redistribute',
+          receivingStaffIds: ['staff_morgan_ellis'],
+          roomId: null,
+          note: null,
+          overrideAcknowledged: false,
+        })
+      ).response.status,
+    ).toBe(400);
+    expect(
+      (
+        await api(path, 'POST', {
+          action: 'redistribute',
+          receivingStaffIds: ['staff_morgan_ellis', 'staff_morgan_ellis'],
+          roomId: null,
+          note: null,
+          overrideAcknowledged: false,
+        })
+      ).response.status,
+    ).toBe(400);
+    expect(
+      (
+        await api(path, 'POST', {
+          action: 'redistribute',
+          receivingStaffIds: ['staff_jordan_kim', 'staff_morgan_ellis'],
+          roomId: null,
+          note: null,
+          overrideAcknowledged: false,
+        })
+      ).response.status,
+    ).toBe(400);
+
+    const valid = await api(path, 'POST', {
+      action: 'redistribute',
+      receivingStaffIds: ['staff_morgan_ellis', 'staff_riley_quinn'],
+      roomId: null,
+      note: null,
+      overrideAcknowledged: false,
+    });
+    expect(valid.response.status).toBe(200);
+    expect(
+      data<{
+        detail: { assignments: Array<Record<string, unknown>> };
+      }>(valid.payload).detail.assignments.find(
+        (assignment) => assignment.id === assignmentId,
+      ),
+    ).toMatchObject({ status: 'assigned', resolutionType: 'redistribution' });
+
+    const warning = await api(path, 'POST', {
+      action: 'redistribute',
+      receivingStaffIds: ['staff_avery_bennett', 'staff_morgan_ellis'],
+      roomId: null,
+      note: 'Equal split.',
+      overrideAcknowledged: false,
+    });
+    expect(warning.response.status).toBe(409);
+
+    const overridden = await api(path, 'POST', {
+      action: 'redistribute',
+      receivingStaffIds: ['staff_avery_bennett', 'staff_morgan_ellis'],
+      roomId: null,
+      note: 'Equal split.',
+      overrideAcknowledged: true,
+    });
+    expect(overridden.response.status).toBe(200);
+    expect(
+      data<{
+        detail: { assignments: Array<Record<string, unknown>> };
+      }>(overridden.payload).detail.assignments.find(
+        (assignment) => assignment.id === assignmentId,
+      ),
+    ).toMatchObject({
+      status: 'assigned',
+      resolutionType: 'redistribution',
+      resolutionDetails: {
+        receivingStaffIds: ['staff_avery_bennett', 'staff_morgan_ellis'],
+        receivingStaffNames: ['Avery Bennett', 'Morgan Ellis'],
+        allocation: 'equal',
+        note: 'Equal split.',
+      },
+    });
+  });
+
+  it('validates concurrent Combine targets and requires acknowledgement for absence or overlapping coverage', async () => {
+    const date = '2026-12-04';
+    const plan = data<{ detail: { plan: { id: string } } }>(
+      (await api('/api/plans/ensure', 'POST', { date, dayType: 'A' })).payload,
+    ).detail.plan;
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_jordan_kim',
+      startDate: date,
+      endDate: date,
+      startTime: null,
+      endTime: null,
+    });
+    const detail = data<{
+      detail: {
+        assignments: Array<{ id: string; startTime: string }>;
+        absences: Array<{ id: string; staffId: string }>;
+      };
+    }>((await api(`/api/plans/${date}`)).payload).detail;
+    const assignmentId = detail.assignments.find(
+      (assignment) => assignment.startTime === '08:00',
+    )!.id;
+    const absenceId = detail.absences.find(
+      (absence) => absence.staffId === 'staff_jordan_kim',
+    )!.id;
+    const path = `/api/assignments/${encodeURIComponent(assignmentId)}/resolve`;
+
+    expect(
+      (
+        await api(path, 'POST', {
+          action: 'combine_class',
+          receivingScheduleEntryId: 'entry_avery_a_0940',
+          roomId: null,
+          note: null,
+          overrideAcknowledged: false,
+        })
+      ).response.status,
+    ).toBe(400);
+
+    await testEnv.DB.prepare(
+      `INSERT INTO assignments (
+         id, daily_sub_plan_id, absence_id, source_schedule_entry_id,
+         start_time, end_time, responsibility_type, description,
+         assigned_staff_id, resolution_type, status, updated_by
+       ) VALUES (
+         'assignment_existing_coverage', ?, ?, 'entry_avery_a_0800',
+         '08:00', '08:50', 'instruction', 'Existing coverage',
+         'staff_avery_bennett', 'teacher_cover', 'assigned', 'user_local_admin'
+       )`,
+    )
+      .bind(plan.id, absenceId)
+      .run();
+    const overlapWarning = await api(path, 'POST', {
+      action: 'combine_class',
+      receivingScheduleEntryId: 'entry_avery_a_0800',
+      roomId: 'room_pri_101',
+      note: null,
+      overrideAcknowledged: false,
+    });
+    expect(overlapWarning.response.status).toBe(409);
+    expect(JSON.stringify(overlapWarning.payload)).toContain(
+      'Overlapping sub coverage',
+    );
+    expect(
+      (
+        await api(path, 'POST', {
+          action: 'combine_class',
+          receivingScheduleEntryId: 'entry_avery_a_0800',
+          roomId: 'room_pri_101',
+          note: null,
+          overrideAcknowledged: true,
+        })
+      ).response.status,
+    ).toBe(200);
+
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_avery_bennett',
+      startDate: date,
+      endDate: date,
+      startTime: null,
+      endTime: null,
+    });
+    const absenceWarning = await api(path, 'POST', {
+      action: 'combine_class',
+      receivingScheduleEntryId: 'entry_avery_a_0800',
+      roomId: 'room_pri_101',
+      note: 'Join Avery.',
+      overrideAcknowledged: false,
+    });
+    expect(absenceWarning.response.status).toBe(409);
+    expect(JSON.stringify(absenceWarning.payload)).toContain(
+      'Avery Bennett is absent',
+    );
+    expect(
+      (
+        await api(path, 'POST', {
+          action: 'combine_class',
+          receivingScheduleEntryId: 'entry_avery_a_0800',
+          roomId: 'room_pri_101',
+          note: 'Join Avery.',
+          overrideAcknowledged: true,
+        })
+      ).response.status,
+    ).toBe(200);
+
+    const message = await api(
+      `/api/plans/${date}/message/regenerate`,
+      'POST',
+      {},
+    );
+    expect(
+      data<{ detail: { message: { editedText: string } } }>(message.payload)
+        .detail.message.editedText,
+    ).toContain(
+      'Combined with Avery Bennett — Primary Literacy in Room PRI-101. Note: Join Avery.',
+    );
+  });
+
   it('limits partial-day generation to overlapping responsibility time', async () => {
     const date = '2026-09-09';
     await api('/api/plans/ensure', 'POST', { date, dayType: 'B' });
@@ -181,13 +585,22 @@ describe('persisted MVP workflow', () => {
     });
     const result = await api(`/api/plans/${date}`);
     const assignments = data<{
-      detail: { assignments: Array<{ startTime: string; endTime: string }> };
+      detail: {
+        assignments: Array<{
+          startTime: string;
+          endTime: string;
+          sourceScheduleEntryId: string | null;
+          sourceSpecialScheduleEntryId: string | null;
+        }>;
+      };
     }>(result.payload).detail.assignments;
     expect(assignments).toHaveLength(1);
     expect(assignments[0]).toMatchObject({
       startTime: '10:00',
       endTime: '10:30',
+      sourceSpecialScheduleEntryId: null,
     });
+    expect(typeof assignments[0]?.sourceScheduleEntryId).toBe('string');
   });
 
   it('retains and invalidates a default when the preferred teacher becomes absent', async () => {

@@ -4,11 +4,20 @@ import { useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
+  assignmentNote,
+  assignmentResolutionLabel,
+  formatRoomLabel,
+} from '@/features/sub-plan/sub-plan-presentation';
+import {
+  ApiError,
   getCandidates,
+  listRooms,
   resolveAssignment,
+  type AssignmentResolutionInput,
   type CandidatePreview,
   type PlanAssignment,
   type PlanDetail,
+  type RoomData,
   type StaffData,
 } from '@/lib/api';
 
@@ -35,6 +44,25 @@ export function ResolveSubNeedDrawer({
   >(null);
   const [otherStaffSearch, setOtherStaffSearch] = useState('');
   const [splitOpen, setSplitOpen] = useState(false);
+  const [alternateEditor, setAlternateEditor] = useState<
+    'combine' | 'redistribute' | null
+  >(null);
+  const [combineEntryId, setCombineEntryId] = useState('');
+  const [redistributionStaffIds, setRedistributionStaffIds] = useState<
+    string[]
+  >(() => redistributionIds(assignment.resolutionDetails));
+  const [rooms, setRooms] = useState<RoomData[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(true);
+  const [roomId, setRoomId] = useState(
+    assignment.roomId === assignment.scheduledRoomId
+      ? ''
+      : (assignment.roomId ?? ''),
+  );
+  const [note, setNote] = useState(
+    assignmentNote(assignment.resolutionDetails) ?? '',
+  );
+  const [pendingOverride, setPendingOverride] =
+    useState<AssignmentResolutionInput | null>(null);
   const [confirmLeaveUncovered, setConfirmLeaveUncovered] = useState(false);
   const [firstStaff, setFirstStaff] = useState('');
   const [secondStaff, setSecondStaff] = useState('');
@@ -60,6 +88,20 @@ export function ResolveSubNeedDrawer({
       });
     return () => controller.abort();
   }, [assignment.id]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void listRooms(controller.signal)
+      .then(setRooms)
+      .catch((cause: unknown) => {
+        if (!(cause instanceof DOMException && cause.name === 'AbortError'))
+          setActionError(errorMessage(cause));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setRoomsLoading(false);
+      });
+    return () => controller.abort();
+  }, []);
 
   const recommended = useMemo(
     () =>
@@ -88,15 +130,52 @@ export function ResolveSubNeedDrawer({
   }, [candidates, otherStaffSearch]);
   const otherStaffCount = candidates.length - recommended.length;
 
-  async function act(input: Record<string, unknown>) {
+  const concurrentCombineEntries = useMemo(() => {
+    const activeStaffIds = new Set(staff.map((person) => person.id));
+    return detail.schedule.filter(
+      (entry) =>
+        activeStaffIds.has(entry.staffId) &&
+        entry.staffId !== assignment.absentStaff.id &&
+        (entry.dayType === 'ALL' || entry.dayType === detail.plan.dayType) &&
+        entry.activityType === 'instruction' &&
+        entry.startTime < assignment.endTime &&
+        assignment.startTime < entry.endTime,
+    );
+  }, [assignment, detail, staff]);
+
+  async function act(input: AssignmentResolutionInput) {
     setBusy(true);
     setActionError(null);
+    setPendingOverride(null);
     try {
       onChange(await resolveAssignment(assignment.id, input));
     } catch (cause) {
       setActionError(errorMessage(cause));
+      if (
+        cause instanceof ApiError &&
+        cause.code === 'override_acknowledgement_required' &&
+        (input.action === 'combine_class' || input.action === 'redistribute')
+      ) {
+        setPendingOverride({ ...input, overrideAcknowledged: true });
+      }
     } finally {
       setBusy(false);
+    }
+  }
+
+  function openAlternateEditor(value: 'combine' | 'redistribute') {
+    setAlternateEditor(value);
+    setPendingOverride(null);
+    setActionError(null);
+    if (value === 'combine') {
+      const existingId = combineEntryIdFrom(assignment.resolutionDetails);
+      const firstId = existingId || concurrentCombineEntries[0]?.id || '';
+      setCombineEntryId(firstId);
+      const target = concurrentCombineEntries.find(
+        (entry) => entry.id === firstId,
+      );
+      if (assignment.roomId === assignment.scheduledRoomId && target?.roomId)
+        setRoomId(target.roomId);
     }
   }
 
@@ -134,6 +213,33 @@ export function ResolveSubNeedDrawer({
 
         <div className="space-y-5 p-5">
           {actionError && <ErrorBanner message={actionError} />}
+          {pendingOverride && (
+            <div className="border-danger/30 bg-danger-soft rounded-md border p-3">
+              <p className="text-danger-dark text-sm font-bold">
+                This choice has an operational conflict.
+              </p>
+              <p className="mt-1 text-xs">
+                Review the warning above, then explicitly acknowledge it to save
+                this resolution.
+              </p>
+              <div className="mt-3 flex justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setPendingOverride(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void act(pendingOverride)}
+                >
+                  Assign Anyway
+                </Button>
+              </div>
+            </div>
+          )}
           <section className="bg-muted grid grid-cols-2 gap-x-5 gap-y-3 rounded-lg p-4 text-sm">
             <Data
               label="Time"
@@ -306,45 +412,16 @@ export function ResolveSubNeedDrawer({
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() =>
-                      void act({
-                        action: 'structured',
-                        resolutionType: 'redistribution',
-                        details: {
-                          decision: 'Conceptual class redistribution',
-                        },
-                      })
-                    }
+                    onClick={() => openAlternateEditor('redistribute')}
                   >
                     Redistribute Class
                   </Button>
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() =>
-                      void act({
-                        action: 'structured',
-                        resolutionType: 'combine_class',
-                        details: { decision: 'Combine class' },
-                      })
-                    }
+                    onClick={() => openAlternateEditor('combine')}
                   >
                     Combine Class
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() =>
-                      void act({
-                        action: 'structured',
-                        resolutionType: 'move_room',
-                        details: {
-                          decision: 'Move room; room to be included in message',
-                        },
-                      })
-                    }
-                  >
-                    Move Room
                   </Button>
                 </>
               )}
@@ -367,6 +444,137 @@ export function ResolveSubNeedDrawer({
                 Leave Uncovered
               </Button>
             </div>
+            {alternateEditor && (
+              <div className="border-border mt-3 space-y-3 rounded-md border bg-white p-3">
+                {alternateEditor === 'combine' ? (
+                  <Labeled label="Combine with">
+                    {concurrentCombineEntries.length > 0 ? (
+                      <select
+                        value={combineEntryId}
+                        onChange={(event) => {
+                          const entryId = event.target.value;
+                          setCombineEntryId(entryId);
+                          const target = concurrentCombineEntries.find(
+                            (entry) => entry.id === entryId,
+                          );
+                          if (
+                            assignment.roomId === assignment.scheduledRoomId &&
+                            target?.roomId
+                          )
+                            setRoomId(target.roomId);
+                        }}
+                        className="field"
+                      >
+                        {concurrentCombineEntries.map((entry) => (
+                          <option key={entry.id} value={entry.id}>
+                            {entry.staffName} — {entry.description} ·{' '}
+                            {entry.startTime}–{entry.endTime}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="border-border text-muted-foreground block rounded-md border border-dashed p-3 text-sm font-normal">
+                        No concurrent instructional classes are available for
+                        this Assignment.
+                      </span>
+                    )}
+                  </Labeled>
+                ) : (
+                  <fieldset>
+                    <legend className="text-muted-foreground text-xs font-semibold">
+                      Redistribute to
+                    </legend>
+                    <div className="border-border mt-1 max-h-44 space-y-1 overflow-y-auto rounded-md border p-2">
+                      {staff
+                        .filter(
+                          (person) => person.id !== assignment.absentStaff.id,
+                        )
+                        .map((person) => (
+                          <label
+                            key={person.id}
+                            className="flex items-center gap-2 rounded px-1 py-1 text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={redistributionStaffIds.includes(
+                                person.id,
+                              )}
+                              onChange={(event) =>
+                                setRedistributionStaffIds((current) =>
+                                  event.target.checked
+                                    ? [...current, person.id]
+                                    : current.filter((id) => id !== person.id),
+                                )
+                              }
+                            />
+                            {person.displayName}
+                          </label>
+                        ))}
+                    </div>
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      Choose at least two recipients. Equal split is used by
+                      default; no student data is recorded.
+                    </p>
+                  </fieldset>
+                )}
+
+                <AssignmentDetailsFields
+                  assignment={assignment}
+                  rooms={rooms}
+                  roomsLoading={roomsLoading}
+                  roomId={roomId}
+                  note={note}
+                  onRoomChange={setRoomId}
+                  onNoteChange={setNote}
+                />
+
+                <div className="flex justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => {
+                      setAlternateEditor(null);
+                      setPendingOverride(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={
+                      busy ||
+                      (alternateEditor === 'combine'
+                        ? !combineEntryId
+                        : redistributionStaffIds.length < 2)
+                    }
+                    onClick={() =>
+                      void act(
+                        alternateEditor === 'combine'
+                          ? {
+                              action: 'combine_class',
+                              receivingScheduleEntryId: combineEntryId,
+                              roomId: roomId || null,
+                              note: note.trim() || null,
+                              overrideAcknowledged: false,
+                            }
+                          : {
+                              action: 'redistribute',
+                              receivingStaffIds: redistributionStaffIds,
+                              roomId: roomId || null,
+                              note: note.trim() || null,
+                              overrideAcknowledged: false,
+                            },
+                      )
+                    }
+                  >
+                    {alternateEditor === 'combine'
+                      ? 'Save Combined Class'
+                      : 'Save Redistribution'}
+                  </Button>
+                </div>
+              </div>
+            )}
             {confirmLeaveUncovered && (
               <div
                 className="border-danger/30 bg-danger-soft mt-3 rounded-md border p-3"
@@ -493,6 +701,42 @@ export function ResolveSubNeedDrawer({
               </div>
             )}
           </section>
+
+          {!alternateEditor && (
+            <section className="border-border space-y-3 rounded-lg border p-4">
+              <div>
+                <h3 className="text-sm font-bold">Details</h3>
+                <p className="text-muted-foreground mt-0.5 text-xs">
+                  Room and Note supplement the primary resolution. They do not
+                  resolve an Unresolved Assignment by themselves.
+                </p>
+              </div>
+              <AssignmentDetailsFields
+                assignment={assignment}
+                rooms={rooms}
+                roomsLoading={roomsLoading}
+                roomId={roomId}
+                note={note}
+                onRoomChange={setRoomId}
+                onNoteChange={setNote}
+              />
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  disabled={busy || roomsLoading}
+                  onClick={() =>
+                    void act({
+                      action: 'update_details',
+                      roomId: roomId || null,
+                      note: note.trim() || null,
+                    })
+                  }
+                >
+                  Save Details
+                </Button>
+              </div>
+            </section>
+          )}
         </div>
       </aside>
     </div>
@@ -695,6 +939,8 @@ function availabilityLabel(candidate: CandidatePreview): string {
 }
 
 function currentAssignmentLabel(assignment: PlanAssignment): string {
+  const presented = assignmentResolutionLabel(assignment);
+  if (presented !== 'Assigned') return presented;
   if (assignment.assignedStaff)
     return `${assignment.assignedStaff.displayName} · ${assignment.status}`;
   if (assignment.segments.length > 0)
@@ -716,6 +962,11 @@ function CurrentChoice({
 }: {
   readonly assignment: PlanAssignment;
 }) {
+  const note = assignmentNote(assignment.resolutionDetails);
+  const plannedRoom =
+    assignment.roomId !== assignment.scheduledRoomId
+      ? formatRoomLabel(assignment.room)
+      : null;
   return (
     <section>
       <h3 className="text-muted-foreground text-xs font-bold tracking-wide uppercase">
@@ -750,9 +1001,105 @@ function CurrentChoice({
         ) : (
           <span>{currentAssignmentLabel(assignment)}</span>
         )}
+        {(plannedRoom || note) && (
+          <p className="text-muted-foreground mt-1 text-xs">
+            {[plannedRoom, note].filter(Boolean).join(' · ')}
+          </p>
+        )}
       </div>
     </section>
   );
+}
+
+function AssignmentDetailsFields({
+  assignment,
+  rooms,
+  roomsLoading,
+  roomId,
+  note,
+  onRoomChange,
+  onNoteChange,
+}: {
+  readonly assignment: PlanAssignment;
+  readonly rooms: readonly RoomData[];
+  readonly roomsLoading: boolean;
+  readonly roomId: string;
+  readonly note: string;
+  readonly onRoomChange: (value: string) => void;
+  readonly onNoteChange: (value: string) => void;
+}) {
+  const selectedRoom = roomId
+    ? (rooms.find((room) => room.id === roomId)?.name ?? assignment.room)
+    : assignment.scheduledRoom;
+  const roomChanged = Boolean(roomId) && roomId !== assignment.scheduledRoomId;
+  return (
+    <div className="space-y-3">
+      <Labeled label="Room">
+        <select
+          value={roomId}
+          disabled={roomsLoading}
+          onChange={(event) => onRoomChange(event.target.value)}
+          className="field"
+        >
+          <option value="">
+            Use scheduled room
+            {assignment.scheduledRoom ? ` (${assignment.scheduledRoom})` : ''}
+          </option>
+          {rooms.map((room) => (
+            <option key={room.id} value={room.id}>
+              {room.name}
+            </option>
+          ))}
+        </select>
+      </Labeled>
+      <dl className="grid grid-cols-2 gap-3 text-xs">
+        <Data
+          label="Scheduled room"
+          value={formatRoomLabel(assignment.scheduledRoom) ?? '—'}
+        />
+        <Data
+          label="Planned room"
+          value={formatRoomLabel(selectedRoom ?? null) ?? '—'}
+        />
+      </dl>
+      {!roomChanged && (
+        <p className="text-muted-foreground text-xs">
+          The planned room matches the scheduled room.
+        </p>
+      )}
+      <Labeled label="Note">
+        <textarea
+          value={note}
+          maxLength={500}
+          rows={3}
+          onChange={(event) => onNoteChange(event.target.value)}
+          placeholder="Optional administrator context"
+          className="field min-h-20 resize-y py-2"
+        />
+      </Labeled>
+      <p className="text-muted-foreground text-right text-xs">
+        {note.length}/500
+      </p>
+    </div>
+  );
+}
+
+function combineEntryIdFrom(details: unknown): string {
+  const value = detailsRecord(details).receivingScheduleEntryId;
+  return typeof value === 'string' ? value : '';
+}
+
+function redistributionIds(details: unknown): string[] {
+  const value = detailsRecord(details).receivingStaffIds;
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
+function detailsRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 function ErrorBanner({ message }: { readonly message: string }) {
