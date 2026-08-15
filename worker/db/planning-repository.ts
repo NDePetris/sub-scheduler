@@ -639,12 +639,29 @@ export class PlanningRepository {
 
   async candidates(
     assignmentId: string,
+    requestedInterval?: {
+      readonly startTime: string;
+      readonly endTime: string;
+    },
   ): Promise<{ assignmentId: string; candidates: CandidatePreview[] }> {
     const [assignment, settings] = await Promise.all([
       this.assignmentById(assignmentId),
       this.settings(),
     ]);
     const plan = await this.planById(assignment.daily_sub_plan_id);
+    const startTime = requestedInterval?.startTime ?? assignment.start_time;
+    const endTime = requestedInterval?.endTime ?? assignment.end_time;
+    if (
+      startTime >= endTime ||
+      startTime < assignment.start_time ||
+      endTime > assignment.end_time
+    ) {
+      throw new HttpError(
+        400,
+        'invalid_candidate_interval',
+        'Candidate interval must have start before end and remain inside the Assignment.',
+      );
+    }
     const [staff, entries, periodEntries, absences, assignments, burdens] =
       await Promise.all([
         this.db
@@ -678,8 +695,8 @@ export class PlanningRepository {
       const check = evaluateCandidate(
         plan,
         person,
-        assignment.start_time,
-        assignment.end_time,
+        startTime,
+        endTime,
         assignment.id,
         context,
       );
@@ -720,8 +737,8 @@ export class PlanningRepository {
             planBlocks,
             [
               {
-                startTime: assignment.start_time,
-                endTime: assignment.end_time,
+                startTime,
+                endTime,
               },
             ],
             standardPeriodMinutes,
@@ -1156,6 +1173,13 @@ export class PlanningRepository {
     const staffById = new Map(staffRows.results.map((row) => [row.id, row]));
     const conflicts: string[] = [];
     for (const segment of segments) {
+      if (segment.staffId === assignment.absent_staff_id) {
+        throw new HttpError(
+          400,
+          'invalid_candidate',
+          'Absent staff cannot cover their own Assignment.',
+        );
+      }
       const staff = staffById.get(segment.staffId);
       if (!staff)
         throw new HttpError(
@@ -2298,7 +2322,7 @@ function legacyResolutionLabel(assignment: {
     return assignment.segments
       .map(
         (segment) =>
-          `${segment.staffName} ${segment.startTime}–${segment.endTime}`,
+          `${segment.startTime}–${segment.endTime} ${segment.staffName}`,
       )
       .join('; ');
   }

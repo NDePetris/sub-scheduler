@@ -175,8 +175,9 @@ describe('Full Schedule timeline presentation', () => {
     });
   });
 
-  it('uses persisted split intervals on each covering staff row', () => {
+  it('uses all persisted split intervals and adds an unscheduled School Sub row', () => {
     const mark = staff('mark', 'Mark Jones');
+    const schoolSub = staff('school-sub', 'Alex Rivera', true);
     const timeline = buildFullScheduleTimeline(
       detail({
         assignments: [
@@ -193,9 +194,16 @@ describe('Full Schedule timeline presentation', () => {
               {
                 id: 'segment-2',
                 startTime: '09:40',
-                endTime: '09:50',
+                endTime: '09:45',
                 staffId: mark.id,
                 staffName: mark.displayName,
+              },
+              {
+                id: 'segment-3',
+                startTime: '09:45',
+                endTime: '09:50',
+                staffId: schoolSub.id,
+                staffName: schoolSub.displayName,
               },
             ],
           }),
@@ -213,7 +221,16 @@ describe('Full Schedule timeline presentation', () => {
     });
     expect(row(timeline, 'mark').coverageOverlays[0]).toMatchObject({
       startTime: '09:40',
+      endTime: '09:45',
+    });
+    expect(row(timeline, 'school-sub')).toMatchObject({
+      staffName: 'Alex Rivera',
+      entries: [],
+    });
+    expect(row(timeline, 'school-sub').coverageOverlays[0]).toMatchObject({
+      startTime: '09:45',
       endTime: '09:50',
+      isSplitSegment: true,
     });
   });
 

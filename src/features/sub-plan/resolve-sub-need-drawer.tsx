@@ -1,8 +1,9 @@
 import { AlertTriangle, Search, Split, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { defaultSplitBoundary } from '@/domain/planning';
 import {
   assignmentNote,
   assignmentResolutionLabel,
@@ -64,19 +65,12 @@ export function ResolveSubNeedDrawer({
   const [pendingOverride, setPendingOverride] =
     useState<AssignmentResolutionInput | null>(null);
   const [confirmLeaveUncovered, setConfirmLeaveUncovered] = useState(false);
-  const [firstStaff, setFirstStaff] = useState('');
-  const [secondStaff, setSecondStaff] = useState('');
-  const [splitTime, setSplitTime] = useState(() =>
-    addMinutes(assignment.startTime, 40),
-  );
 
   useEffect(() => {
     const controller = new AbortController();
-    void getCandidates(assignment.id, controller.signal)
+    void getCandidates(assignment.id, { signal: controller.signal })
       .then((values) => {
         setCandidates(values);
-        setFirstStaff(values[0]?.id ?? '');
-        setSecondStaff(values[1]?.id ?? values[0]?.id ?? '');
       })
       .catch((cause: unknown) => {
         if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
@@ -617,88 +611,12 @@ export function ResolveSubNeedDrawer({
               </div>
             )}
             {splitOpen && (
-              <div className="border-border mt-3 space-y-3 rounded-md border bg-white p-3">
-                <p className="text-muted-foreground text-xs">
-                  Segments must meet exactly; the suggested split follows the{' '}
-                  {detail.settings.splitSnapMinutes}-minute editing convention.
-                </p>
-                <div className="grid grid-cols-[1fr_120px_1fr] items-end gap-2">
-                  <Labeled label={`${assignment.startTime} to split`}>
-                    <select
-                      value={firstStaff}
-                      onChange={(event) => setFirstStaff(event.target.value)}
-                      className="field"
-                    >
-                      {staff
-                        .filter(
-                          (person) => person.id !== assignment.absentStaff.id,
-                        )
-                        .map((person) => (
-                          <option key={person.id} value={person.id}>
-                            {person.displayName}
-                          </option>
-                        ))}
-                    </select>
-                  </Labeled>
-                  <Labeled label="Split time">
-                    <input
-                      type="time"
-                      step={detail.settings.splitSnapMinutes * 60}
-                      min={assignment.startTime}
-                      max={assignment.endTime}
-                      value={splitTime}
-                      onChange={(event) => setSplitTime(event.target.value)}
-                      className="field"
-                    />
-                  </Labeled>
-                  <Labeled label={`Split to ${assignment.endTime}`}>
-                    <select
-                      value={secondStaff}
-                      onChange={(event) => setSecondStaff(event.target.value)}
-                      className="field"
-                    >
-                      {staff
-                        .filter(
-                          (person) => person.id !== assignment.absentStaff.id,
-                        )
-                        .map((person) => (
-                          <option key={person.id} value={person.id}>
-                            {person.displayName}
-                          </option>
-                        ))}
-                    </select>
-                  </Labeled>
-                </div>
-                <Button
-                  size="sm"
-                  disabled={
-                    !firstStaff ||
-                    !secondStaff ||
-                    splitTime <= assignment.startTime ||
-                    splitTime >= assignment.endTime
-                  }
-                  onClick={() =>
-                    void act({
-                      action: 'split',
-                      segments: [
-                        {
-                          staffId: firstStaff,
-                          startTime: assignment.startTime,
-                          endTime: splitTime,
-                        },
-                        {
-                          staffId: secondStaff,
-                          startTime: splitTime,
-                          endTime: assignment.endTime,
-                        },
-                      ],
-                      assignAnyway: true,
-                    })
-                  }
-                >
-                  Save Split
-                </Button>
-              </div>
+              <SplitAssignmentEditor
+                assignment={assignment}
+                snapMinutes={detail.settings.splitSnapMinutes}
+                onCancel={() => setSplitOpen(false)}
+                onChange={onChange}
+              />
             )}
           </section>
 
@@ -740,6 +658,610 @@ export function ResolveSubNeedDrawer({
         </div>
       </aside>
     </div>
+  );
+}
+
+interface SplitDraftSegment {
+  readonly key: string;
+  readonly staffId: string;
+  readonly endTime: string;
+}
+
+interface SplitConflictGroup {
+  readonly segmentNumber: number;
+  readonly staffName: string;
+  readonly startTime: string;
+  readonly endTime: string;
+  readonly conflicts: readonly string[];
+}
+
+function SplitAssignmentEditor({
+  assignment,
+  snapMinutes,
+  onCancel,
+  onChange,
+}: {
+  readonly assignment: PlanAssignment;
+  readonly snapMinutes: number;
+  readonly onCancel: () => void;
+  readonly onChange: (detail: PlanDetail) => void;
+}) {
+  const [drafts, setDrafts] = useState<SplitDraftSegment[]>(() =>
+    initialSplitDraft(assignment, snapMinutes),
+  );
+  const [candidateMap, setCandidateMap] = useState<
+    Record<string, readonly CandidatePreview[]>
+  >({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [pendingOverride, setPendingOverride] = useState<{
+    readonly segments: readonly {
+      readonly staffId: string;
+      readonly startTime: string;
+      readonly endTime: string;
+    }[];
+    readonly groups: readonly SplitConflictGroup[];
+    readonly serverMessage: string;
+  } | null>(null);
+
+  const intervals = useMemo(
+    () =>
+      drafts.map((draft, index) => ({
+        key: draft.key,
+        staffId: draft.staffId,
+        startTime:
+          index === 0 ? assignment.startTime : drafts[index - 1]!.endTime,
+        endTime: draft.endTime,
+      })),
+    [assignment.startTime, drafts],
+  );
+  const structurallyValid =
+    intervals.length >= 2 &&
+    intervals.every(
+      (segment) =>
+        segment.staffId &&
+        segment.startTime < segment.endTime &&
+        segment.startTime >= assignment.startTime &&
+        segment.endTime <= assignment.endTime,
+    ) &&
+    intervals.at(-1)?.endTime === assignment.endTime;
+  const canAddSegment = intervals.some(
+    (segment) => minutes(segment.endTime) - minutes(segment.startTime) >= 2,
+  );
+
+  const handleCandidatesLoaded = useCallback(
+    (key: string, values: readonly CandidatePreview[]) => {
+      setCandidateMap((current) => ({ ...current, [key]: values }));
+    },
+    [],
+  );
+
+  function updateDrafts(
+    update: (current: readonly SplitDraftSegment[]) => SplitDraftSegment[],
+  ) {
+    setDrafts(update);
+    setPendingOverride(null);
+    setSaveError(null);
+  }
+
+  function addSegment() {
+    let targetIndex = -1;
+    let targetDuration = -1;
+    intervals.forEach((segment, index) => {
+      const duration = minutes(segment.endTime) - minutes(segment.startTime);
+      if (duration >= 2 && duration > targetDuration) {
+        targetIndex = index;
+        targetDuration = duration;
+      }
+    });
+    if (targetIndex < 0) return;
+    const target = intervals[targetIndex]!;
+    const boundary = splitBoundary(
+      target.startTime,
+      target.endTime,
+      snapMinutes,
+    );
+    updateDrafts((current) => {
+      const next = [...current];
+      const existing = next[targetIndex]!;
+      next[targetIndex] = { ...existing, endTime: boundary };
+      next.splice(targetIndex + 1, 0, {
+        key: newSplitKey(),
+        staffId: '',
+        endTime: existing.endTime,
+      });
+      return next;
+    });
+  }
+
+  function removeSegment(index: number) {
+    if (drafts.length <= 2) return;
+    updateDrafts((current) => {
+      const next = [...current];
+      const removed = next[index]!;
+      if (index > 0) {
+        next[index - 1] = { ...next[index - 1]!, endTime: removed.endTime };
+      }
+      next.splice(index, 1);
+      return next;
+    });
+  }
+
+  function proposedSegments() {
+    return intervals.map((segment) => ({
+      staffId: segment.staffId,
+      startTime: segment.startTime,
+      endTime: segment.endTime,
+    }));
+  }
+
+  function conflictGroups(): SplitConflictGroup[] {
+    return intervals.flatMap((segment, index) => {
+      const selected = candidateMap[segment.key]?.find(
+        (candidate) => candidate.id === segment.staffId,
+      );
+      return selected && selected.conflicts.length > 0
+        ? [
+            {
+              segmentNumber: index + 1,
+              staffName: selected.displayName,
+              startTime: segment.startTime,
+              endTime: segment.endTime,
+              conflicts: selected.conflicts,
+            },
+          ]
+        : [];
+    });
+  }
+
+  async function saveSplit(
+    segments: readonly {
+      readonly staffId: string;
+      readonly startTime: string;
+      readonly endTime: string;
+    }[],
+    assignAnyway: boolean,
+  ) {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const detail = await resolveAssignment(assignment.id, {
+        action: 'split',
+        segments,
+        assignAnyway,
+      });
+      setPendingOverride(null);
+      onChange(detail);
+    } catch (cause) {
+      if (
+        !assignAnyway &&
+        cause instanceof ApiError &&
+        cause.code === 'override_acknowledgement_required'
+      ) {
+        setPendingOverride({
+          segments,
+          groups: conflictGroups(),
+          serverMessage: cause.message,
+        });
+      } else {
+        setSaveError(errorMessage(cause));
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="border-border mt-3 space-y-3 rounded-md border bg-white p-3">
+      <div>
+        <h4 className="text-sm font-bold">Split Coverage</h4>
+        <p className="text-muted-foreground mt-0.5 text-xs">
+          Internal boundaries use the {snapMinutes}-minute editing convention.
+          Adjacent segments move together, while the Assignment start and end
+          remain fixed.
+        </p>
+      </div>
+
+      {saveError && <ErrorBanner message={saveError} />}
+
+      <div className="space-y-3">
+        {intervals.map((segment, index) => (
+          <section
+            key={segment.key}
+            className="border-border rounded-md border p-3"
+            aria-labelledby={`split-segment-${segment.key}`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h5
+                  id={`split-segment-${segment.key}`}
+                  className="text-sm font-bold"
+                >
+                  Segment {index + 1}
+                </h5>
+                <p className="text-muted-foreground font-mono text-xs">
+                  {segment.startTime}–{segment.endTime}
+                </p>
+              </div>
+              {drafts.length > 2 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => removeSegment(index)}
+                >
+                  Remove
+                </Button>
+              )}
+            </div>
+
+            {index < intervals.length - 1 && (
+              <div className="mt-3 max-w-44">
+                <Labeled label="Ends at">
+                  <input
+                    type="time"
+                    step={snapMinutes * 60}
+                    min={segment.startTime}
+                    max={intervals[index + 1]!.endTime}
+                    value={segment.endTime}
+                    onChange={(event) => {
+                      const endTime = event.target.value;
+                      updateDrafts((current) =>
+                        current.map((draft) =>
+                          draft.key === segment.key
+                            ? { ...draft, endTime }
+                            : draft,
+                        ),
+                      );
+                    }}
+                    className="field"
+                  />
+                </Labeled>
+              </div>
+            )}
+
+            <SegmentCandidatePicker
+              assignmentId={assignment.id}
+              segmentKey={segment.key}
+              startTime={segment.startTime}
+              endTime={segment.endTime}
+              staffId={segment.staffId}
+              onStaffChange={(staffId) =>
+                updateDrafts((current) =>
+                  current.map((draft) =>
+                    draft.key === segment.key ? { ...draft, staffId } : draft,
+                  ),
+                )
+              }
+              onCandidatesLoaded={handleCandidatesLoaded}
+            />
+          </section>
+        ))}
+      </div>
+
+      {!structurallyValid && (
+        <p className="text-danger-dark text-xs">
+          Choose an eligible staff member for every non-zero segment and keep
+          all boundaries in order.
+        </p>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={!canAddSegment}
+          onClick={addSegment}
+        >
+          + Add Segment
+        </Button>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={saving}
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            disabled={saving || !structurallyValid}
+            onClick={() => void saveSplit(proposedSegments(), false)}
+          >
+            Save Split
+          </Button>
+        </div>
+      </div>
+
+      {pendingOverride && (
+        <div
+          className="border-danger/30 bg-danger-soft rounded-md border p-3"
+          role="alertdialog"
+          aria-labelledby="split-conflict-title"
+        >
+          <p
+            id="split-conflict-title"
+            className="text-danger-dark text-sm font-bold"
+          >
+            Review split conflicts
+          </p>
+          {pendingOverride.groups.length > 0 ? (
+            <div className="mt-2 space-y-3">
+              {pendingOverride.groups.map((group) => (
+                <div key={`${group.segmentNumber}-${group.staffName}`}>
+                  <p className="text-sm font-semibold">
+                    {group.staffName} · {group.startTime}–{group.endTime}
+                  </p>
+                  <ul className="text-danger-dark mt-1 list-inside list-disc text-xs">
+                    {group.conflicts.map((conflict) => (
+                      <li key={conflict}>{conflict}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-danger-dark mt-2 text-xs">
+              {pendingOverride.serverMessage}
+            </p>
+          )}
+          <p className="mt-2 text-xs">
+            Saving anyway records one administrator acknowledgement for this
+            proposed split.
+          </p>
+          <div className="mt-3 flex justify-end gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={saving}
+              onClick={() => setPendingOverride(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={saving}
+              onClick={() => void saveSplit(pendingOverride.segments, true)}
+            >
+              Save Split Anyway
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SegmentCandidatePicker({
+  assignmentId,
+  segmentKey,
+  startTime,
+  endTime,
+  staffId,
+  onStaffChange,
+  onCandidatesLoaded,
+}: {
+  readonly assignmentId: string;
+  readonly segmentKey: string;
+  readonly startTime: string;
+  readonly endTime: string;
+  readonly staffId: string;
+  readonly onStaffChange: (staffId: string) => void;
+  readonly onCandidatesLoaded: (
+    key: string,
+    values: readonly CandidatePreview[],
+  ) => void;
+}) {
+  const requestKey = `${startTime}-${endTime}`;
+  const [response, setResponse] = useState<{
+    readonly key: string;
+    readonly candidates: CandidatePreview[];
+    readonly error: string | null;
+  }>({ key: '', candidates: [], error: null });
+  const [search, setSearch] = useState('');
+  const loading = response.key !== requestKey;
+  const candidates = loading ? [] : response.candidates;
+  const error = loading ? null : response.error;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      onCandidatesLoaded(segmentKey, []);
+      void getCandidates(assignmentId, {
+        startTime,
+        endTime,
+        signal: controller.signal,
+      })
+        .then((values) => {
+          setResponse({ key: requestKey, candidates: values, error: null });
+          onCandidatesLoaded(segmentKey, values);
+        })
+        .catch((cause: unknown) => {
+          if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
+            setResponse({
+              key: requestKey,
+              candidates: [],
+              error: errorMessage(cause),
+            });
+          }
+        });
+    }, 250);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [
+    assignmentId,
+    endTime,
+    onCandidatesLoaded,
+    requestKey,
+    segmentKey,
+    startTime,
+  ]);
+
+  const recommended = candidates.filter(
+    (candidate) =>
+      candidate.availability !== 'manual' && candidate.conflicts.length === 0,
+  );
+  const other = candidates.filter((candidate) => {
+    if (recommended.includes(candidate)) return false;
+    const query = search.trim().toLocaleLowerCase('en-US');
+    return (
+      !query ||
+      `${candidate.displayName} ${candidate.availabilitySource} ${candidate.conflicts.join(' ')}`
+        .toLocaleLowerCase('en-US')
+        .includes(query)
+    );
+  });
+  const selected = candidates.find((candidate) => candidate.id === staffId);
+
+  return (
+    <div className="mt-3 space-y-2" aria-busy={loading}>
+      <p className="text-muted-foreground text-xs font-bold tracking-wide uppercase">
+        Recommended
+      </p>
+      {loading ? (
+        <div className="bg-muted h-16 animate-pulse rounded-md" />
+      ) : error ? (
+        <ErrorBanner message={error} />
+      ) : recommended.length > 0 ? (
+        <div className="space-y-1.5">
+          {recommended.map((candidate) => (
+            <SegmentCandidateOption
+              key={candidate.id}
+              candidate={candidate}
+              selected={candidate.id === staffId}
+              onSelect={() => onStaffChange(candidate.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="border-border text-muted-foreground rounded-md border border-dashed p-2 text-xs">
+          No staff are automatically available for this segment.
+        </p>
+      )}
+
+      {!loading && !error && candidates.length > recommended.length && (
+        <details className="border-border rounded-md border">
+          <summary className="hover:bg-muted/40 cursor-pointer px-2.5 py-2 text-xs font-semibold">
+            Other Staff ({candidates.length - recommended.length})
+          </summary>
+          <div className="border-border space-y-2 border-t p-2">
+            <label className="border-border flex h-8 items-center gap-2 rounded-md border px-2">
+              <Search className="text-muted-foreground size-3.5" />
+              <span className="sr-only">Search Other Staff</span>
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search Other Staff"
+                className="w-full bg-transparent text-xs outline-none"
+              />
+            </label>
+            {other.map((candidate) => (
+              <SegmentCandidateOption
+                key={candidate.id}
+                candidate={candidate}
+                selected={candidate.id === staffId}
+                onSelect={() => onStaffChange(candidate.id)}
+              />
+            ))}
+          </div>
+        </details>
+      )}
+
+      {staffId && !selected && !loading && !error && (
+        <p className="text-danger-dark text-xs">
+          The previously selected staff member is no longer eligible.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SegmentCandidateOption({
+  candidate,
+  selected,
+  onSelect,
+}: {
+  readonly candidate: CandidatePreview;
+  readonly selected: boolean;
+  readonly onSelect: () => void;
+}) {
+  const thresholdWarning =
+    candidate.projectedBurden !== null &&
+    candidate.projectedBurden >= candidate.threshold;
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onSelect}
+      className={`w-full rounded-md border p-2 text-left transition-colors ${
+        selected
+          ? 'border-brand bg-brand-soft/40'
+          : 'border-border hover:bg-muted/40'
+      }`}
+    >
+      <span className="flex flex-wrap items-center gap-1.5 text-sm">
+        <span className="font-semibold">{candidate.displayName}</span>
+        <Badge>{availabilityLabel(candidate)}</Badge>
+        {candidate.isDefaultCandidate && (
+          <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
+            Default
+          </Badge>
+        )}
+        {thresholdWarning && (
+          <Badge className="border-warning/40 bg-warning-soft text-warning-dark">
+            <AlertTriangle className="size-3" aria-hidden="true" />
+            Workload Warning
+          </Badge>
+        )}
+      </span>
+      <SegmentWorkload candidate={candidate} />
+      {candidate.conflicts.map((conflict) => (
+        <span
+          key={conflict}
+          className="text-danger-dark mt-1 flex gap-1.5 text-xs"
+        >
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+          {conflict}
+        </span>
+      ))}
+      {candidate.warnings
+        .filter((warning) => warning.startsWith('Plan-time calculation needs'))
+        .map((warning) => (
+          <span
+            key={warning}
+            className="border-warning/40 bg-warning-soft text-warning-dark mt-1 block rounded border px-2 py-1 text-xs"
+          >
+            {warning}
+          </span>
+        ))}
+      {thresholdWarning && (
+        <span className="border-warning/40 bg-warning-soft text-warning-dark mt-1 block rounded border px-2 py-1 text-xs">
+          After assignment, {candidate.projectedBurden?.toFixed(2)} Plan Periods
+          Lost reaches the {candidate.threshold.toFixed(2)} warning threshold.
+        </span>
+      )}
+    </button>
+  );
+}
+
+function SegmentWorkload({
+  candidate,
+}: {
+  readonly candidate: CandidatePreview;
+}) {
+  const current = candidate.currentBurden?.toFixed(2) ?? 'Unknown';
+  const proposed =
+    candidate.proposedBurden === null
+      ? 'Unknown'
+      : `+${candidate.proposedBurden.toFixed(2)}`;
+  const projected = candidate.projectedBurden?.toFixed(2) ?? 'Unknown';
+  return (
+    <span className="text-muted-foreground mt-1 block text-xs">
+      Last {candidate.windowDays} days: {current} · This segment: {proposed} ·
+      After assignment: {projected}
+    </span>
   );
 }
 
@@ -989,6 +1511,7 @@ function CurrentChoice({
           </div>
         ) : assignment.segments.length > 0 ? (
           <div className="space-y-1">
+            <p className="font-semibold">Split Coverage</p>
             {assignment.segments.map((segment) => (
               <div key={segment.id}>
                 <span className="font-semibold">{segment.staffName}</span>{' '}
@@ -1150,6 +1673,49 @@ function minutes(value: string): number {
 function addMinutes(value: string, amount: number): string {
   const result = minutes(value) + amount;
   return `${String(Math.floor(result / 60)).padStart(2, '0')}:${String(result % 60).padStart(2, '0')}`;
+}
+
+function initialSplitDraft(
+  assignment: PlanAssignment,
+  snapMinutes: number,
+): SplitDraftSegment[] {
+  if (assignment.segments.length >= 2) {
+    return [...assignment.segments]
+      .sort((left, right) => left.startTime.localeCompare(right.startTime))
+      .map((segment) => ({
+        key: segment.id,
+        staffId: segment.staffId,
+        endTime: segment.endTime,
+      }));
+  }
+  const boundary = defaultSplitBoundary(
+    { startTime: assignment.startTime, endTime: assignment.endTime },
+    snapMinutes,
+  );
+  return [
+    { key: newSplitKey(), staffId: '', endTime: boundary },
+    { key: newSplitKey(), staffId: '', endTime: assignment.endTime },
+  ];
+}
+
+function splitBoundary(
+  startTime: string,
+  endTime: string,
+  snapMinutes: number,
+): string {
+  const duration = minutes(endTime) - minutes(startTime);
+  const snappedTrailingSegment = Math.max(1, snapMinutes);
+  if (duration > snappedTrailingSegment) {
+    return addMinutes(startTime, duration - snappedTrailingSegment);
+  }
+  return addMinutes(startTime, Math.max(1, Math.floor(duration / 2)));
+}
+
+let splitKeySequence = 0;
+
+function newSplitKey(): string {
+  splitKeySequence += 1;
+  return `split-draft-${splitKeySequence}`;
 }
 
 function errorMessage(cause: unknown): string {

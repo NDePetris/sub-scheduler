@@ -460,11 +460,19 @@ export async function addAbsence(input: {
 
 export async function getCandidates(
   assignmentId: string,
-  signal?: AbortSignal,
+  options: {
+    readonly startTime?: string;
+    readonly endTime?: string;
+    readonly signal?: AbortSignal;
+  } = {},
 ): Promise<CandidatePreview[]> {
+  const search = new URLSearchParams();
+  if (options.startTime) search.set('startTime', options.startTime);
+  if (options.endTime) search.set('endTime', options.endTime);
+  const query = search.size > 0 ? `?${search.toString()}` : '';
   const result = await apiRequest<{ candidates: CandidatePreview[] }>(
-    `/api/assignments/${encodeURIComponent(assignmentId)}/candidates`,
-    { signal },
+    `/api/assignments/${encodeURIComponent(assignmentId)}/candidates${query}`,
+    { signal: options.signal },
   );
   return result.candidates;
 }

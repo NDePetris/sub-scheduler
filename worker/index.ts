@@ -165,6 +165,19 @@ const resolveSchema = z.discriminatedUnion('action', [
     note: assignmentNoteSchema,
   }),
 ]);
+const candidateIntervalSchema = z
+  .object({
+    startTime: timeSchema.optional(),
+    endTime: timeSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    if ((value.startTime === undefined) !== (value.endTime === undefined)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Candidate interval requires both startTime and endTime.',
+      });
+    }
+  });
 const messageEditSchema = z.object({ editedText: z.string().max(100_000) });
 const statusSchema = z.object({ status: z.enum(['draft', 'finalized']) });
 const staffRoleSchema = z.enum(STAFF_ROLES);
@@ -635,9 +648,19 @@ export default {
         url.pathname,
       );
       if (candidatesMatch?.[1] && request.method === 'GET') {
+        const interval = candidateIntervalSchema.parse({
+          startTime: url.searchParams.get('startTime') ?? undefined,
+          endTime: url.searchParams.get('endTime') ?? undefined,
+        });
         return jsonSuccess(
           await planningRepository.candidates(
             decodeURIComponent(candidatesMatch[1]),
+            interval.startTime && interval.endTime
+              ? {
+                  startTime: interval.startTime,
+                  endTime: interval.endTime,
+                }
+              : undefined,
           ),
           requestId,
         );

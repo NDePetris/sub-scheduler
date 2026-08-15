@@ -216,6 +216,23 @@ export interface SplitSegmentInput extends CoverageInterval {
   readonly staffId: string;
 }
 
+export function defaultSplitBoundary(
+  parent: CoverageInterval,
+  snapMinutes: number,
+): string {
+  const start = localTimeToMinutes(parseLocalTime(parent.startTime));
+  const end = localTimeToMinutes(parseLocalTime(parent.endTime));
+  const duration = end - start;
+  if (duration < 2)
+    throw new Error('Split coverage requires room for two segments.');
+  if (duration === 50) return minutesToLocalTime(start + 40);
+  const trailing = Math.max(1, snapMinutes);
+  return minutesToLocalTime(
+    start +
+      (duration > trailing ? duration - trailing : Math.floor(duration / 2)),
+  );
+}
+
 export function validateSplitSegments(
   parent: CoverageInterval,
   segments: readonly SplitSegmentInput[],

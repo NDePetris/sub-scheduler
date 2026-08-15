@@ -709,6 +709,8 @@ describe('persisted MVP workflow', () => {
            ('staff_candidate_unknown', 'Candidate Unknown', 'teacher', 1, 1, 0),
            ('staff_candidate_threshold', 'Candidate Threshold', 'teacher', 1, 1, 0),
            ('staff_candidate_conflict', 'Candidate Conflict', 'teacher', 1, 1, 0),
+           ('staff_candidate_first_segment', 'Candidate First Segment', 'teacher', 1, 1, 0),
+           ('staff_candidate_final_segment', 'Candidate Final Segment', 'teacher', 1, 1, 0),
            ('staff_school_admin', 'School Sub Admin Role', 'administrator', 1, 1, 1),
            ('staff_school_plan', 'School Sub Teacher Role', 'teacher', 1, 1, 1),
            ('staff_school_absent', 'School Sub Absent', 'teacher', 1, 1, 1),
@@ -740,6 +742,9 @@ describe('persisted MVP workflow', () => {
            ('school_plan_0900', 'schedule_2026_fall', 'staff_school_plan', 'A', '09:00', '10:20', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
            ('candidate_conflict_plan', 'schedule_2026_fall', 'staff_candidate_conflict', 'A', '09:00', '09:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
            ('candidate_conflict_class', 'schedule_2026_fall', 'staff_candidate_conflict', 'A', '09:00', '09:40', 'instruction', 'INT', 'INT Math', 'room_int_301', 1),
+           ('candidate_first_segment_plan', 'schedule_2026_fall', 'staff_candidate_first_segment', 'A', '09:00', '09:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('candidate_first_segment_period', 'schedule_2026_fall', 'staff_candidate_first_segment', 'A', '13:30', '14:10', 'instruction', 'HS', 'Typical 40-minute class', 'room_hs_lab', 0),
+           ('candidate_final_segment_busy', 'schedule_2026_fall', 'staff_candidate_final_segment', 'A', '09:00', '09:40', 'instruction', 'INT', 'Morning Class', 'room_int_301', 0),
            ('candidate_threshold_0900', 'schedule_2026_fall', 'staff_candidate_threshold', 'A', '09:00', '09:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
            ('candidate_threshold_1000', 'schedule_2026_fall', 'staff_candidate_threshold', 'A', '10:00', '10:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
            ('candidate_threshold_1040', 'schedule_2026_fall', 'staff_candidate_threshold', 'A', '10:40', '11:20', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
@@ -837,9 +842,15 @@ describe('persisted MVP workflow', () => {
       standardPeriodSource: 'configured' | 'auto' | null;
       windowDays: number;
     };
-    async function candidatesFor(id: string) {
+    async function candidatesFor(
+      id: string,
+      interval?: { startTime: string; endTime: string },
+    ) {
+      const query = interval
+        ? `?startTime=${interval.startTime}&endTime=${interval.endTime}`
+        : '';
       const result = await api(
-        `/api/assignments/${encodeURIComponent(id)}/candidates`,
+        `/api/assignments/${encodeURIComponent(id)}/candidates${query}`,
       );
       expect(result.response.status).toBe(200);
       return data<{ candidates: Candidate[] }>(result.payload).candidates;
@@ -1007,6 +1018,69 @@ describe('persisted MVP workflow', () => {
       proposedBurden: 1.25,
       projectedBurden: 2.75,
     });
+
+    const firstForty = await candidatesFor('candidate_target_span', {
+      startTime: '09:00',
+      endTime: '09:40',
+    });
+    expect(
+      firstForty.find(
+        (candidate) => candidate.id === 'staff_candidate_first_segment',
+      ),
+    ).toMatchObject({
+      availability: 'plan',
+      proposedBurden: 1,
+      projectedBurden: 1,
+      standardPeriodMinutes: 40,
+    });
+    expect(
+      spanning.find(
+        (candidate) => candidate.id === 'staff_candidate_first_segment',
+      ),
+    ).toMatchObject({ availability: 'manual' });
+
+    const firstTwenty = await candidatesFor('candidate_target_span', {
+      startTime: '09:00',
+      endTime: '09:20',
+    });
+    expect(
+      firstTwenty.find(
+        (candidate) => candidate.id === 'staff_candidate_first_segment',
+      ),
+    ).toMatchObject({ availability: 'plan', proposedBurden: 0.5 });
+
+    const finalTen = await candidatesFor('candidate_target_span', {
+      startTime: '09:40',
+      endTime: '09:50',
+    });
+    expect(
+      finalTen.find(
+        (candidate) => candidate.id === 'staff_candidate_final_segment',
+      ),
+    ).toMatchObject({
+      availability: 'open',
+      availabilitySource: 'Available',
+      proposedBurden: 0,
+      conflicts: [],
+    });
+
+    const thresholdTen = await candidatesFor('candidate_target_span', {
+      startTime: '09:30',
+      endTime: '09:40',
+    });
+    const thresholdAtBoundary = thresholdTen.find(
+      (candidate) => candidate.id === 'staff_candidate_threshold',
+    );
+    expect(thresholdAtBoundary).toMatchObject({
+      proposedBurden: 0.25,
+      projectedBurden: 5,
+    });
+    expect(thresholdAtBoundary?.warnings.join(' ')).toContain('5.00');
+
+    const outsideParent = await api(
+      '/api/assignments/candidate_target_span/candidates?startTime=08:50&endTime=09:10',
+    );
+    expect(outsideParent.response.status).toBe(400);
 
     await testEnv.DB.prepare(
       `UPDATE assignments
@@ -1365,7 +1439,7 @@ describe('persisted MVP workflow', () => {
     expect(planCount?.count).toBe(0);
   });
 
-  it('creates and persists a valid 40/10 split', async () => {
+  it('creates, edits, overrides, and atomically replaces split coverage', async () => {
     const date = '2026-09-11';
     await api('/api/plans/ensure', 'POST', { date, dayType: 'A' });
     await api('/api/absences', 'POST', {
@@ -1383,35 +1457,235 @@ describe('persisted MVP workflow', () => {
     }>(result.payload).detail.assignments;
     const assignment = assignments.find((item) => item.startTime === '08:00');
     expect(assignment).toBeTruthy();
-    const resolved = await api(
-      `/api/assignments/${encodeURIComponent(assignment!.id)}/resolve`,
-      'POST',
-      {
-        action: 'split',
-        assignAnyway: true,
-        segments: [
-          {
-            staffId: 'staff_riley_quinn',
-            startTime: '08:00',
-            endTime: '08:40',
-          },
-          {
-            staffId: 'staff_casey_brooks',
-            startTime: '08:40',
-            endTime: '08:50',
-          },
-        ],
-      },
-    );
+    const path = `/api/assignments/${encodeURIComponent(assignment!.id)}/resolve`;
+
+    await api(path, 'POST', {
+      action: 'update_details',
+      roomId: 'room_int_301',
+      note: 'Keep this split note.',
+    });
+    await api(path, 'POST', {
+      action: 'assign',
+      staffId: 'staff_riley_quinn',
+      assignAnyway: false,
+    });
+    const resolved = await api(path, 'POST', {
+      action: 'split',
+      assignAnyway: false,
+      segments: [
+        {
+          staffId: 'staff_riley_quinn',
+          startTime: '08:00',
+          endTime: '08:40',
+        },
+        {
+          staffId: 'staff_casey_brooks',
+          startTime: '08:40',
+          endTime: '08:50',
+        },
+      ],
+    });
     const updated = data<{
       detail: {
-        assignments: Array<{ id: string; status: string; segments: unknown[] }>;
+        assignments: Array<{
+          id: string;
+          status: string;
+          resolutionType: string;
+          resolutionDetails: unknown;
+          roomId: string;
+          segments: unknown[];
+        }>;
       };
     }>(resolved.payload).detail.assignments.find(
       (item) => item.id === assignment!.id,
     );
-    expect(updated).toMatchObject({ status: 'assigned' });
+    expect(updated).toMatchObject({
+      status: 'assigned',
+      resolutionType: 'split_coverage',
+      roomId: 'room_int_301',
+      resolutionDetails: { note: 'Keep this split note.' },
+    });
     expect(updated?.segments).toHaveLength(2);
+
+    const edited = await api(path, 'POST', {
+      action: 'split',
+      assignAnyway: false,
+      segments: [
+        {
+          staffId: 'staff_riley_quinn',
+          startTime: '08:00',
+          endTime: '08:20',
+        },
+        {
+          staffId: 'staff_casey_brooks',
+          startTime: '08:20',
+          endTime: '08:40',
+        },
+        {
+          staffId: 'staff_riley_quinn',
+          startTime: '08:40',
+          endTime: '08:50',
+        },
+      ],
+    });
+    const editedAssignment = data<{
+      detail: {
+        assignments: Array<{
+          id: string;
+          segments: Array<{
+            startTime: string;
+            endTime: string;
+            staffId: string;
+          }>;
+        }>;
+      };
+    }>(edited.payload).detail.assignments.find(
+      (item) => item.id === assignment!.id,
+    );
+    expect(editedAssignment?.segments).toEqual([
+      expect.objectContaining({
+        startTime: '08:00',
+        endTime: '08:20',
+        staffId: 'staff_riley_quinn',
+      }),
+      expect.objectContaining({
+        startTime: '08:20',
+        endTime: '08:40',
+        staffId: 'staff_casey_brooks',
+      }),
+      expect.objectContaining({
+        startTime: '08:40',
+        endTime: '08:50',
+        staffId: 'staff_riley_quinn',
+      }),
+    ]);
+
+    const message = await api(
+      `/api/plans/${date}/message/regenerate`,
+      'POST',
+      {},
+    );
+    expect(
+      data<{ detail: { message: { editedText: string } } }>(message.payload)
+        .detail.message.editedText,
+    ).toContain(
+      '08:00–08:20 Riley Quinn; 08:20–08:40 Casey Brooks; 08:40–08:50 Riley Quinn',
+    );
+
+    const rejectedConflict = await api(path, 'POST', {
+      action: 'split',
+      assignAnyway: false,
+      segments: [
+        {
+          staffId: 'staff_avery_bennett',
+          startTime: '08:00',
+          endTime: '08:20',
+        },
+        {
+          staffId: 'staff_casey_brooks',
+          startTime: '08:20',
+          endTime: '08:50',
+        },
+      ],
+    });
+    expect(rejectedConflict.response.status).toBe(409);
+    const unchangedCount = await testEnv.DB.prepare(
+      `SELECT COUNT(*) AS count FROM assignment_segments WHERE assignment_id = ?`,
+    )
+      .bind(assignment!.id)
+      .first<{ count: number }>();
+    expect(unchangedCount?.count).toBe(3);
+
+    expect(
+      (
+        await api(path, 'POST', {
+          action: 'split',
+          assignAnyway: true,
+          segments: [
+            {
+              staffId: 'staff_avery_bennett',
+              startTime: '08:00',
+              endTime: '08:20',
+            },
+            {
+              staffId: 'staff_casey_brooks',
+              startTime: '08:20',
+              endTime: '08:50',
+            },
+          ],
+        })
+      ).response.status,
+    ).toBe(200);
+    const overrideAudit = await testEnv.DB.prepare(
+      `SELECT override_acknowledged_at, override_acknowledged_by
+         FROM assignments WHERE id = ?`,
+    )
+      .bind(assignment!.id)
+      .first<{
+        override_acknowledged_at: string | null;
+        override_acknowledged_by: string | null;
+      }>();
+    expect(overrideAudit?.override_acknowledged_at).toBeTruthy();
+    expect(overrideAudit?.override_acknowledged_by).toBe('user_local_admin');
+
+    const direct = await api(path, 'POST', {
+      action: 'assign',
+      staffId: 'staff_riley_quinn',
+      assignAnyway: false,
+    });
+    expect(
+      data<{
+        detail: {
+          assignments: Array<{
+            id: string;
+            assignedStaff: { id: string } | null;
+            segments: unknown[];
+          }>;
+        };
+      }>(direct.payload).detail.assignments.find(
+        (item) => item.id === assignment!.id,
+      ),
+    ).toMatchObject({
+      assignedStaff: { id: 'staff_riley_quinn' },
+      segments: [],
+    });
+
+    await api(path, 'POST', {
+      action: 'combine_class',
+      receivingScheduleEntryId: 'entry_avery_a_0800',
+      roomId: 'room_int_301',
+      note: 'Keep this split note.',
+      overrideAcknowledged: false,
+    });
+    const splitAfterCombine = await api(path, 'POST', {
+      action: 'split',
+      assignAnyway: false,
+      segments: [
+        {
+          staffId: 'staff_riley_quinn',
+          startTime: '08:00',
+          endTime: '08:30',
+        },
+        {
+          staffId: 'staff_casey_brooks',
+          startTime: '08:30',
+          endTime: '08:50',
+        },
+      ],
+    });
+    const afterCombine = data<{
+      detail: { assignments: Array<Record<string, unknown>> };
+    }>(splitAfterCombine.payload).detail.assignments.find(
+      (item) => item.id === assignment!.id,
+    );
+    expect(afterCombine).toMatchObject({
+      resolutionType: 'split_coverage',
+      roomId: 'room_int_301',
+      resolutionDetails: { note: 'Keep this split note.' },
+    });
+    expect(afterCombine?.resolutionDetails).not.toHaveProperty(
+      'receivingScheduleEntryId',
+    );
   });
 
   it('uses a one-day Special Schedule without changing the following day', async () => {

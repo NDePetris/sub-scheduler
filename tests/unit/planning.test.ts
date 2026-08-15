@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   affectedResponsibilities,
   calculatePlanPeriodsLost,
+  defaultSplitBoundary,
   enumerateWeekdaySchoolDates,
   expectedDayType,
   inferStandardPeriodMinutes,
@@ -283,7 +284,7 @@ describe('MVP planning domain', () => {
     expect(projectedPlanPeriodsLost(4.75, 0.5)).toBe(5.25);
   });
 
-  it('validates a 40/10 split and rejects gaps', () => {
+  it('validates two- and three-segment splits', () => {
     expect(() =>
       validateSplitSegments({ startTime: '09:00', endTime: '09:50' }, [
         { staffId: 'a', startTime: '09:00', endTime: '09:40' },
@@ -293,9 +294,54 @@ describe('MVP planning domain', () => {
     expect(() =>
       validateSplitSegments({ startTime: '09:00', endTime: '09:50' }, [
         { staffId: 'a', startTime: '09:00', endTime: '09:30' },
+        { staffId: 'b', startTime: '09:30', endTime: '09:50' },
+      ]),
+    ).not.toThrow();
+    expect(() =>
+      validateSplitSegments({ startTime: '09:00', endTime: '09:50' }, [
+        { staffId: 'a', startTime: '09:00', endTime: '09:20' },
+        { staffId: 'b', startTime: '09:20', endTime: '09:40' },
+        { staffId: 'c', startTime: '09:40', endTime: '09:50' },
+      ]),
+    ).not.toThrow();
+  });
+
+  it('chooses deterministic configured-snap defaults with the common 40/10 case', () => {
+    expect(
+      defaultSplitBoundary({ startTime: '09:00', endTime: '09:50' }, 10),
+    ).toBe('09:40');
+    expect(
+      defaultSplitBoundary({ startTime: '09:00', endTime: '09:40' }, 10),
+    ).toBe('09:30');
+    expect(
+      defaultSplitBoundary({ startTime: '09:03', endTime: '09:12' }, 10),
+    ).toBe('09:07');
+  });
+
+  it('rejects invalid split structure', () => {
+    expect(() =>
+      validateSplitSegments({ startTime: '09:00', endTime: '09:50' }, [
+        { staffId: 'a', startTime: '09:00', endTime: '09:30' },
         { staffId: 'b', startTime: '09:40', endTime: '09:50' },
       ]),
     ).toThrow('without gaps or overlaps');
+    expect(() =>
+      validateSplitSegments({ startTime: '09:00', endTime: '09:50' }, [
+        { staffId: 'a', startTime: '09:00', endTime: '09:30' },
+        { staffId: 'b', startTime: '09:20', endTime: '09:50' },
+      ]),
+    ).toThrow('without gaps or overlaps');
+    expect(() =>
+      validateSplitSegments({ startTime: '09:00', endTime: '09:50' }, [
+        { staffId: 'a', startTime: '09:00', endTime: '09:00' },
+        { staffId: 'b', startTime: '09:00', endTime: '09:50' },
+      ]),
+    ).toThrow('start before end');
+    expect(() =>
+      validateSplitSegments({ startTime: '09:00', endTime: '09:50' }, [
+        { staffId: 'a', startTime: '09:00', endTime: '09:50' },
+      ]),
+    ).toThrow('at least two');
   });
 
   it('orders Default, School Sub, one shared automatic tier, and manual candidates deterministically', () => {
