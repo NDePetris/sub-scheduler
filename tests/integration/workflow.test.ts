@@ -1320,6 +1320,91 @@ describe('persisted MVP workflow', () => {
     expect(segmentCount?.count).toBe(0);
   });
 
+  it('invalidates structured receiving-teacher resolutions while preserving modifiers', async () => {
+    const date = '2026-12-14';
+    await api('/api/plans/ensure', 'POST', { date, dayType: 'A' });
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_jordan_kim',
+      startDate: date,
+      endDate: date,
+      startTime: null,
+      endTime: null,
+    });
+    const initial = data<{
+      detail: {
+        assignments: Array<{ id: string; startTime: string }>;
+      };
+    }>((await api(`/api/plans/${date}`)).payload).detail;
+    const combinedId = initial.assignments.find(
+      (assignment) => assignment.startTime === '08:00',
+    )!.id;
+    const redistributedId = initial.assignments.find(
+      (assignment) => assignment.startTime === '08:50',
+    )!.id;
+    await api(
+      `/api/assignments/${encodeURIComponent(combinedId)}/resolve`,
+      'POST',
+      {
+        action: 'combine_class',
+        receivingScheduleEntryId: 'entry_avery_a_0800',
+        roomId: 'room_int_301',
+        note: 'Preserve combine note.',
+        overrideAcknowledged: false,
+      },
+    );
+    await api(
+      `/api/assignments/${encodeURIComponent(redistributedId)}/resolve`,
+      'POST',
+      {
+        action: 'redistribute',
+        receivingStaffIds: ['staff_avery_bennett', 'staff_casey_brooks'],
+        roomId: 'room_int_301',
+        note: 'Preserve redistribution note.',
+        overrideAcknowledged: true,
+      },
+    );
+
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_avery_bennett',
+      startDate: date,
+      endDate: date,
+      startTime: null,
+      endTime: null,
+    });
+    const assignments = data<{
+      detail: {
+        assignments: Array<{
+          id: string;
+          status: string;
+          resolutionType: string | null;
+          resolutionDetails: unknown;
+          roomId: string | null;
+          conflictExplanation: string | null;
+        }>;
+      };
+    }>((await api(`/api/plans/${date}`)).payload).detail.assignments;
+    expect(
+      assignments.find((assignment) => assignment.id === combinedId),
+    ).toMatchObject({
+      status: 'unresolved',
+      resolutionType: null,
+      resolutionDetails: { note: 'Preserve combine note.' },
+      roomId: 'room_int_301',
+      conflictExplanation:
+        'Avery Bennett, who was receiving the combined class, is also absent.',
+    });
+    expect(
+      assignments.find((assignment) => assignment.id === redistributedId),
+    ).toMatchObject({
+      status: 'unresolved',
+      resolutionType: null,
+      resolutionDetails: { note: 'Preserve redistribution note.' },
+      roomId: 'room_int_301',
+      conflictExplanation:
+        'Avery Bennett, who was receiving part of the redistributed class, is also absent.',
+    });
+  });
+
   it('keeps direct coverage assigned when a new partial absence does not overlap it', async () => {
     const date = '2026-09-21';
     await api('/api/plans/ensure', 'POST', { date, dayType: 'A' });

@@ -125,6 +125,54 @@ export interface CoverageInterval {
   readonly endTime: string;
 }
 
+export interface AvailabilityScheduleEntry extends CoverageInterval {
+  readonly activityType: string;
+}
+
+export type ScheduleAvailability = 'plan' | 'admin' | 'open' | 'manual';
+
+export interface ScheduleAvailabilityResult<
+  T extends AvailabilityScheduleEntry = AvailabilityScheduleEntry,
+> {
+  readonly availability: ScheduleAvailability;
+  readonly conflictingEntries: readonly T[];
+}
+
+export function classifyScheduleAvailability<
+  T extends AvailabilityScheduleEntry,
+>(
+  applicableEntries: readonly T[],
+  coverage: CoverageInterval,
+): ScheduleAvailabilityResult<T> {
+  const required = interval(coverage.startTime, coverage.endTime);
+  const overlappingEntries = applicableEntries.filter((entry) =>
+    intervalsOverlap(interval(entry.startTime, entry.endTime), required),
+  );
+  const conflictingEntries = overlappingEntries.filter(
+    (entry) => entry.activityType !== 'plan' && entry.activityType !== 'admin',
+  );
+  if (
+    coversTimeRange(
+      overlappingEntries.filter((entry) => entry.activityType === 'plan'),
+      coverage,
+    )
+  ) {
+    return { availability: 'plan', conflictingEntries };
+  }
+  if (
+    coversTimeRange(
+      overlappingEntries.filter((entry) => entry.activityType === 'admin'),
+      coverage,
+    )
+  ) {
+    return { availability: 'admin', conflictingEntries };
+  }
+  if (applicableEntries.length > 0 && overlappingEntries.length === 0) {
+    return { availability: 'open', conflictingEntries };
+  }
+  return { availability: 'manual', conflictingEntries };
+}
+
 export interface PlanBlock {
   readonly startTime: string;
   readonly endTime: string;
@@ -188,20 +236,33 @@ export function calculatePlanPeriodsLost(
   coverage: readonly CoverageInterval[],
   standardPeriodMinutes?: number | null,
 ): number | null {
-  let total = 0;
+  const intersections: Array<{ start: number; end: number }> = [];
   for (const planBlock of planBlocks) {
     const block = interval(planBlock.startTime, planBlock.endTime);
     for (const segment of coverage) {
-      const minutes = overlapMinutes(
-        block,
-        interval(segment.startTime, segment.endTime),
-      );
+      const covered = interval(segment.startTime, segment.endTime);
+      const minutes = overlapMinutes(block, covered);
       if (minutes === 0) continue;
-      if (!standardPeriodMinutes || standardPeriodMinutes <= 0) return null;
-      total += minutes / standardPeriodMinutes;
+      intersections.push({
+        start: Math.max(
+          localTimeToMinutes(block.start),
+          localTimeToMinutes(covered.start),
+        ),
+        end: Math.min(
+          localTimeToMinutes(block.end),
+          localTimeToMinutes(covered.end),
+        ),
+      });
     }
   }
-  return roundBurden(total);
+  if (intersections.length === 0) return 0;
+  if (!standardPeriodMinutes || standardPeriodMinutes <= 0) return null;
+  const merged = mergeMinuteRanges(intersections);
+  const totalMinutes = merged.reduce(
+    (total, range) => total + range.end - range.start,
+    0,
+  );
+  return roundBurden(totalMinutes / standardPeriodMinutes);
 }
 
 export function projectedPlanPeriodsLost(
@@ -349,6 +410,41 @@ function interval(start: string, end: string): TimeInterval {
   if (parsedStart >= parsedEnd)
     throw new Error('A time interval must have start before end.');
   return { start: parsedStart, end: parsedEnd };
+}
+
+function coversTimeRange(
+  entries: readonly AvailabilityScheduleEntry[],
+  coverage: CoverageInterval,
+): boolean {
+  const requiredStart = localTimeToMinutes(parseLocalTime(coverage.startTime));
+  const requiredEnd = localTimeToMinutes(parseLocalTime(coverage.endTime));
+  const ranges = mergeMinuteRanges(
+    entries.map((entry) => ({
+      start: localTimeToMinutes(parseLocalTime(entry.startTime)),
+      end: localTimeToMinutes(parseLocalTime(entry.endTime)),
+    })),
+  );
+  return ranges.some(
+    (range) => range.start <= requiredStart && range.end >= requiredEnd,
+  );
+}
+
+function mergeMinuteRanges(
+  ranges: readonly { start: number; end: number }[],
+): Array<{ start: number; end: number }> {
+  const ordered = [...ranges].sort(
+    (left, right) => left.start - right.start || left.end - right.end,
+  );
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const range of ordered) {
+    const previous = merged.at(-1);
+    if (!previous || range.start > previous.end) {
+      merged.push({ ...range });
+    } else if (range.end > previous.end) {
+      previous.end = range.end;
+    }
+  }
+  return merged;
 }
 
 function minutesToLocalTime(value: number): string {

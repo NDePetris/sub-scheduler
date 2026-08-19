@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   affectedResponsibilities,
   calculatePlanPeriodsLost,
+  classifyScheduleAvailability,
   defaultSplitBoundary,
   enumerateWeekdaySchoolDates,
   expectedDayType,
@@ -114,6 +115,60 @@ describe('MVP planning domain', () => {
       ).toBe(expected);
     },
   );
+
+  it('counts unique PLAN minutes when schedule blocks or coverage overlap', () => {
+    expect(
+      calculatePlanPeriodsLost(
+        [
+          { startTime: '09:00', endTime: '09:40' },
+          { startTime: '09:20', endTime: '10:00' },
+        ],
+        [
+          { startTime: '09:00', endTime: '09:40' },
+          { startTime: '09:20', endTime: '10:00' },
+        ],
+        40,
+      ),
+    ).toBe(1.5);
+  });
+
+  it('classifies exact-range schedule availability from one shared rule', () => {
+    const entries = [
+      {
+        startTime: '09:00',
+        endTime: '09:40',
+        activityType: 'plan',
+        description: 'PLAN',
+      },
+      {
+        startTime: '10:00',
+        endTime: '10:40',
+        activityType: 'instruction',
+        description: 'Class',
+      },
+    ];
+    expect(
+      classifyScheduleAvailability(entries, {
+        startTime: '09:00',
+        endTime: '09:40',
+      }),
+    ).toMatchObject({ availability: 'plan', conflictingEntries: [] });
+    expect(
+      classifyScheduleAvailability(entries, {
+        startTime: '09:40',
+        endTime: '10:00',
+      }),
+    ).toMatchObject({ availability: 'open', conflictingEntries: [] });
+    expect(
+      classifyScheduleAvailability(entries, {
+        startTime: '10:00',
+        endTime: '10:20',
+      }),
+    ).toMatchObject({
+      availability: 'manual',
+      conflictingEntries: [expect.objectContaining({ description: 'Class' })],
+    });
+  });
 
   it.each([
     ['09:00', '09:25', 0.5],

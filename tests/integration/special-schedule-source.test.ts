@@ -49,7 +49,7 @@ const candidate: SchoolScheduleCandidate = {
   ],
 };
 
-describe.sequential('exclusive normal or Special Schedule sources', () => {
+describe.sequential('normal and Special Schedule context', () => {
   it('creates a Special-only plan and generates Needs Sub Assignments without a normal schedule', async () => {
     const imports = new ImportRepository(testEnv.DB);
     const planning = new PlanningRepository(testEnv.DB);
@@ -58,7 +58,7 @@ describe.sequential('exclusive normal or Special Schedule sources', () => {
       name: 'Testing Day',
       fileName: 'testing-day.xlsx',
       sha256: 'special-only-source',
-      specialDate: '2040-03-15',
+      specialDate: '2025-03-14',
       effectiveTo: null,
       candidate,
       issues: [],
@@ -66,12 +66,12 @@ describe.sequential('exclusive normal or Special Schedule sources', () => {
     });
     expect(staged).toMatchObject({
       kind: 'special',
-      specialDate: '2040-03-15',
+      specialDate: '2025-03-14',
       effectiveFrom: null,
       status: 'ready',
     });
     const activated = await imports.activateSpecial(staged.id, actorId);
-    const detail = await planning.ensurePlan('2040-03-15', 'A', actorId);
+    const detail = await planning.ensurePlan('2025-03-14', 'A', actorId);
     expect(detail.plan).toMatchObject({
       scheduleVersionId: null,
       scheduleName: null,
@@ -83,14 +83,14 @@ describe.sequential('exclusive normal or Special Schedule sources', () => {
     await planning.addAbsence(
       {
         staffId: 'staff_avery_bennett',
-        startDate: '2040-03-15',
-        endDate: '2040-03-15',
+        startDate: '2025-03-14',
+        endDate: '2025-03-14',
         startTime: null,
         endTime: null,
       },
       actorId,
     );
-    const generated = await planning.getPlan('2040-03-15');
+    const generated = await planning.getPlan('2025-03-14');
     expect(generated.assignments).toEqual([
       expect.objectContaining({
         description: 'Special Day Class',
@@ -116,7 +116,7 @@ describe.sequential('exclusive normal or Special Schedule sources', () => {
     ).resolves.toMatchObject({ assignmentId: generated.assignments[0]!.id });
   });
 
-  it('pins only Special when both sources apply and normal on the following date', async () => {
+  it('pins normal context with a Special override and resumes normal entries the following date', async () => {
     const planning = new PlanningRepository(testEnv.DB);
     await testEnv.DB.batch([
       testEnv.DB.prepare(
@@ -131,18 +131,47 @@ describe.sequential('exclusive normal or Special Schedule sources', () => {
            activity_type, category, description, room_id, requires_sub
          ) VALUES ('special_precedence_entry', 'special_precedence',
                    'staff_avery_bennett', 'ALL', '10:00', '10:30',
-                   'instruction', 'PRI', 'Conference Class', 'room_pri_101', 1)`,
+                    'instruction', 'PRI', 'Conference Class', 'room_pri_101', 1)`,
+      ),
+      testEnv.DB.prepare(
+        `INSERT INTO special_schedule_entries (
+           id, special_schedule_id, staff_id, day_type, start_time, end_time,
+           activity_type, category, description, room_id, requires_sub
+         ) VALUES ('special_precedence_plan', 'special_precedence',
+                   'staff_jordan_kim', 'ALL', '10:00', '10:30', 'plan',
+                   'PLAN_ADMIN', 'Conference PLAN', NULL, 0)`,
       ),
     ]);
     const special = await planning.ensurePlan('2026-10-20', 'B', actorId);
     expect(special.plan).toMatchObject({
-      scheduleVersionId: null,
+      scheduleVersionId: 'schedule_2026_fall',
       specialScheduleId: 'special_precedence',
-      expectedDayType: null,
     });
+    expect(special.plan.expectedDayType).not.toBeNull();
     expect(special.schedule.map((entry) => entry.description)).toEqual([
       'Conference Class',
+      'Conference PLAN',
     ]);
+    await planning.addAbsence(
+      {
+        staffId: 'staff_avery_bennett',
+        startDate: '2026-10-20',
+        endDate: '2026-10-20',
+        startTime: null,
+        endTime: null,
+      },
+      actorId,
+    );
+    const assignment = (await planning.getPlan('2026-10-20')).assignments[0]!;
+    const jordan = (await planning.candidates(assignment.id)).candidates.find(
+      (candidate) => candidate.id === 'staff_jordan_kim',
+    );
+    expect(jordan).toMatchObject({
+      availability: 'plan',
+      standardPeriodMinutes: 50,
+      standardPeriodSource: 'auto',
+      proposedBurden: 0.6,
+    });
     const normal = await planning.ensurePlan('2026-10-21', 'A', actorId);
     expect(normal.plan.scheduleVersionId).toBe('schedule_2026_fall');
     expect(normal.plan.specialScheduleId).toBeNull();

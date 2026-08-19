@@ -1,6 +1,7 @@
 import {
   affectedResponsibilities,
   calculatePlanPeriodsLost,
+  classifyScheduleAvailability,
   enumerateWeekdaySchoolDates,
   expectedDayType,
   projectedPlanPeriodsLost,
@@ -146,6 +147,7 @@ interface MessageRow {
 
 interface WorkloadCoverageRow {
   staff_id: string;
+  date: string;
   day_type: DayType;
   schedule_version_id: string | null;
   special_schedule_id: string | null;
@@ -478,83 +480,50 @@ export class PlanningRepository {
         );
       }
       if (planSeed.insert) statements.push(planSeed.insert);
-      statements.push(
-        this.db
-          .prepare(
-            `UPDATE assignments
-                SET assigned_staff_id = NULL, resolution_type = NULL,
-                    resolution_details_json = NULL, status = 'unresolved',
-                    is_default = 0, conflict_explanation = ?, updated_by = ?,
-                    override_acknowledged_at = NULL,
-                    override_acknowledged_by = NULL,
-                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-              WHERE daily_sub_plan_id = ? AND status = 'assigned'
-                AND assigned_staff_id = ?
-                AND (? IS NULL OR (start_time < ? AND ? < end_time))`,
-          )
-          .bind(
-            `${staff.display_name} is also absent.`,
-            actorId,
-            planSeed.plan.id,
-            staff.id,
-            input.startTime,
-            input.endTime,
-            input.startTime,
-          ),
-        this.db
-          .prepare(
-            `UPDATE assignments
-                SET assigned_staff_id = NULL, resolution_type = NULL,
-                    resolution_details_json = NULL, status = 'unresolved',
-                    is_default = 0, conflict_explanation = ?, updated_by = ?,
-                    override_acknowledged_at = NULL,
-                    override_acknowledged_by = NULL,
-                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-              WHERE daily_sub_plan_id = ? AND status = 'assigned'
-                AND resolution_type = 'split_coverage'
-                AND EXISTS (
-                  SELECT 1 FROM assignment_segments invalid_segment
-                   WHERE invalid_segment.assignment_id = assignments.id
-                     AND invalid_segment.staff_id = ?
-                     AND (? IS NULL OR (
-                       invalid_segment.start_time < ?
-                       AND ? < invalid_segment.end_time
-                     ))
-                )`,
-          )
-          .bind(
-            `${staff.display_name}, who was providing split coverage, is also absent.`,
-            actorId,
-            planSeed.plan.id,
-            staff.id,
-            input.startTime,
-            input.endTime,
-            input.startTime,
-          ),
-        this.db
-          .prepare(
-            `DELETE FROM assignment_segments
-              WHERE assignment_id IN (
-                SELECT invalid_segment.assignment_id
-                  FROM assignment_segments invalid_segment
-                  JOIN assignments parent
-                    ON parent.id = invalid_segment.assignment_id
-                 WHERE parent.daily_sub_plan_id = ?
-                   AND invalid_segment.staff_id = ?
-                   AND (? IS NULL OR (
-                     invalid_segment.start_time < ?
-                     AND ? < invalid_segment.end_time
-                   ))
-              )`,
-          )
-          .bind(
-            planSeed.plan.id,
-            staff.id,
-            input.startTime,
-            input.endTime,
-            input.startTime,
-          ),
+      const currentAssignments = await this.assignmentsForPlan(
+        planSeed.plan.id,
       );
+      const currentSegments = await this.segmentsForAssignments(
+        currentAssignments.map((assignment) => assignment.id),
+      );
+      for (const assignment of currentAssignments) {
+        const invalidation = resolutionInvalidation(
+          assignment,
+          currentSegments,
+          staff,
+          input.startTime,
+          input.endTime,
+        );
+        if (!invalidation) continue;
+        if (assignment.resolution_type === 'split_coverage') {
+          statements.push(
+            this.db
+              .prepare(
+                `DELETE FROM assignment_segments WHERE assignment_id = ?`,
+              )
+              .bind(assignment.id),
+          );
+        }
+        statements.push(
+          this.db
+            .prepare(
+              `UPDATE assignments
+                  SET assigned_staff_id = NULL, resolution_type = NULL,
+                      resolution_details_json = ?, status = 'unresolved',
+                      is_default = 0, conflict_explanation = ?, updated_by = ?,
+                      override_acknowledged_at = NULL,
+                      override_acknowledged_by = NULL,
+                      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                WHERE id = ?`,
+            )
+            .bind(
+              noteOnlyDetailsJson(assignment.resolution_details_json),
+              invalidation,
+              actorId,
+              assignment.id,
+            ),
+        );
+      }
       const entries = (await this.entriesForPlan(planSeed.plan)).filter(
         (entry) => entry.staff_id === input.staffId,
       );
@@ -1562,7 +1531,7 @@ export class PlanningRepository {
     const startDate = shiftSchoolDate(date, -(windowDays - 1));
     const coverage = await this.db
       .prepare(
-        `SELECT a.assigned_staff_id AS staff_id, p.day_type,
+        `SELECT a.assigned_staff_id AS staff_id, p.date, p.day_type,
                 p.schedule_version_id, p.special_schedule_id,
                 a.start_time, a.end_time, st.standard_period_minutes,
                 st.is_school_sub
@@ -1572,7 +1541,7 @@ export class PlanningRepository {
           WHERE a.assigned_staff_id IS NOT NULL AND a.status = 'assigned'
             AND a.id <> ? AND p.date BETWEEN ? AND ?
           UNION ALL
-         SELECT s.staff_id, p.day_type, p.schedule_version_id,
+         SELECT s.staff_id, p.date, p.day_type, p.schedule_version_id,
                 p.special_schedule_id, s.start_time, s.end_time,
                 st.standard_period_minutes, st.is_school_sub
            FROM assignment_segments s
@@ -1617,9 +1586,35 @@ export class PlanningRepository {
       entriesByCandidateAndSource.set(key, list);
     }
 
-    const burdens = new Map<string, number | null>();
+    const coverageGroups = new Map<
+      string,
+      {
+        item: WorkloadCoverageRow;
+        coverage: Array<{ startTime: string; endTime: string }>;
+      }
+    >();
     for (const item of coverage.results) {
       if (item.is_school_sub === 1) continue;
+      const key = [
+        item.staff_id,
+        item.date,
+        item.day_type,
+        item.schedule_version_id ?? '',
+        item.special_schedule_id ?? '',
+      ].join(':');
+      const group = coverageGroups.get(key) ?? { item, coverage: [] };
+      group.coverage.push({
+        startTime: item.start_time,
+        endTime: item.end_time,
+      });
+      coverageGroups.set(key, group);
+    }
+
+    const burdens = new Map<string, number | null>();
+    for (const {
+      item,
+      coverage: coveredIntervals,
+    } of coverageGroups.values()) {
       const sourceType = item.special_schedule_id ? 'special' : 'normal';
       const sourceId = item.special_schedule_id ?? item.schedule_version_id;
       if (!sourceId) continue;
@@ -1640,13 +1635,18 @@ export class PlanningRepository {
       const standardPeriodMinutes = resolveStandardPeriodMinutes({
         configuredMinutes: item.standard_period_minutes,
         dayType: item.day_type,
-        normalEntries:
-          sourceType === 'normal' ? sourceEntries.map(periodEntryDto) : [],
+        normalEntries: item.schedule_version_id
+          ? (
+              entriesByCandidateAndSource.get(
+                `${item.staff_id}:normal:${item.schedule_version_id}`,
+              ) ?? []
+            ).map(periodEntryDto)
+          : [],
         applicableEntries: sourceEntries.map(periodEntryDto),
       });
       const burden = calculatePlanPeriodsLost(
         blocks,
-        [{ startTime: item.start_time, endTime: item.end_time }],
+        coveredIntervals,
         standardPeriodMinutes,
       );
       const existing = burdens.has(item.staff_id)
@@ -1758,23 +1758,25 @@ export class PlanningRepository {
   }
 
   private async resolveSchedule(date: string) {
-    const special = await this.db
-      .prepare(
-        `SELECT id, name FROM special_schedules WHERE date = ? AND status = 'active' LIMIT 1`,
-      )
-      .bind(date)
-      .first<SpecialScheduleRow>();
-    if (special) return { normal: null, special };
-    const normal = await this.db
-      .prepare(
-        `SELECT id, name, effective_from FROM schedule_versions
-          WHERE status = 'active' AND effective_from <= ?
-            AND (effective_to IS NULL OR effective_to >= ?)
-          ORDER BY effective_from DESC LIMIT 2`,
-      )
-      .bind(date, date)
-      .all<ScheduleResolutionRow>();
+    const [special, normal] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT id, name FROM special_schedules WHERE date = ? AND status = 'active' LIMIT 1`,
+        )
+        .bind(date)
+        .first<SpecialScheduleRow>(),
+      this.db
+        .prepare(
+          `SELECT id, name, effective_from FROM schedule_versions
+            WHERE status = 'active' AND effective_from <= ?
+              AND (effective_to IS NULL OR effective_to >= ?)
+            ORDER BY effective_from DESC LIMIT 2`,
+        )
+        .bind(date, date)
+        .all<ScheduleResolutionRow>(),
+    ]);
     if (normal.results.length === 0) {
+      if (special) return { normal: null, special };
       throw new HttpError(
         409,
         'no_schedule_for_date',
@@ -1788,7 +1790,7 @@ export class PlanningRepository {
         'Multiple active Schedule Versions apply to this date.',
       );
     }
-    return { normal: normal.results[0]!, special: null };
+    return { normal: normal.results[0]!, special };
   }
 
   private async findPlan(date: string): Promise<PlanRow | null> {
@@ -2079,9 +2081,6 @@ function evaluateCandidate(
       entry.staff_id === staff.id &&
       (entry.day_type === 'ALL' || entry.day_type === plan.day_type),
   );
-  const entries = applicableEntries.filter(
-    (entry) => entry.start_time < endTime && startTime < entry.end_time,
-  );
   if (staff.is_school_sub === 1) {
     return {
       source: 'School Sub',
@@ -2090,34 +2089,22 @@ function evaluateCandidate(
       warnings,
     };
   }
-
-  for (const entry of entries.filter(
-    (entry) =>
-      entry.activity_type !== 'plan' && entry.activity_type !== 'admin',
-  )) {
+  const scheduleAvailability = classifyScheduleAvailability(
+    applicableEntries.map(availabilityEntryDto),
+    { startTime, endTime },
+  );
+  for (const entry of scheduleAvailability.conflictingEntries) {
     addConflict(
-      `Scheduled conflict: ${entry.description}, ${entry.start_time}\u2013${entry.end_time}.`,
+      `Scheduled conflict: ${entry.description}, ${entry.startTime}\u2013${entry.endTime}.`,
     );
   }
-  if (
-    coversInterval(
-      entries.filter((entry) => entry.activity_type === 'plan'),
-      startTime,
-      endTime,
-    )
-  ) {
+  if (scheduleAvailability.availability === 'plan') {
     return { source: 'Plan Period', sourceType: 'plan', conflicts, warnings };
   }
-  if (
-    coversInterval(
-      entries.filter((entry) => entry.activity_type === 'admin'),
-      startTime,
-      endTime,
-    )
-  ) {
+  if (scheduleAvailability.availability === 'admin') {
     return { source: 'Admin', sourceType: 'admin', conflicts, warnings };
   }
-  if (applicableEntries.length > 0 && entries.length === 0) {
+  if (scheduleAvailability.availability === 'open') {
     return { source: 'Available', sourceType: 'open', conflicts, warnings };
   }
   return { source: 'Manual', sourceType: 'manual', conflicts, warnings };
@@ -2137,28 +2124,16 @@ function resolutionSource(
       entry.staff_id === assignment.assigned_staff_id &&
       (entry.day_type === 'ALL' || entry.day_type === dayType),
   );
-  const entries = applicableEntries.filter(
-    (entry) =>
-      entry.start_time < assignment.end_time &&
-      assignment.start_time < entry.end_time,
+  const availability = classifyScheduleAvailability(
+    applicableEntries.map(availabilityEntryDto),
+    {
+      startTime: assignment.start_time,
+      endTime: assignment.end_time,
+    },
   );
-  if (
-    coversInterval(
-      entries.filter((entry) => entry.activity_type === 'plan'),
-      assignment.start_time,
-      assignment.end_time,
-    )
-  )
-    return 'PLAN';
-  if (
-    coversInterval(
-      entries.filter((entry) => entry.activity_type === 'admin'),
-      assignment.start_time,
-      assignment.end_time,
-    )
-  )
-    return 'Admin';
-  if (applicableEntries.length > 0 && entries.length === 0) return 'Available';
+  if (availability.availability === 'plan') return 'PLAN';
+  if (availability.availability === 'admin') return 'Admin';
+  if (availability.availability === 'open') return 'Available';
   return 'Manual';
 }
 
@@ -2177,7 +2152,6 @@ function defaultResolutionType(actionType: string): string | null {
     redistribute_class: 'redistribution',
     switch_groups: 'switch_groups',
     combine_class: 'combine_class',
-    move_room: 'move_room',
     cover_duty: 'duty_coverage',
   };
   return values[actionType] ?? null;
@@ -2194,23 +2168,6 @@ function unresolvedDefault(conflict: string) {
   };
 }
 
-function coversInterval(
-  entries: readonly Pick<EntryRow, 'start_time' | 'end_time'>[],
-  startTime: string,
-  endTime: string,
-): boolean {
-  const ordered = [...entries].sort((left, right) =>
-    left.start_time.localeCompare(right.start_time),
-  );
-  let cursor = startTime;
-  for (const entry of ordered) {
-    if (entry.end_time <= cursor || entry.start_time > cursor) continue;
-    cursor = entry.end_time > cursor ? entry.end_time : cursor;
-    if (cursor >= endTime) return true;
-  }
-  return false;
-}
-
 function timeRangesOverlap(
   absenceStart: string | null,
   absenceEnd: string | null,
@@ -2221,15 +2178,66 @@ function timeRangesOverlap(
   return absenceStart < endTime && startTime < absenceEnd;
 }
 
-function assertPlanSource(plan: PlanRow): void {
+function resolutionInvalidation(
+  assignment: AssignmentRow,
+  segments: readonly SegmentRow[],
+  absentStaff: { readonly id: string; readonly display_name: string },
+  absenceStart: string | null,
+  absenceEnd: string | null,
+): string | null {
   if (
-    (plan.schedule_version_id !== null) ===
-    (plan.special_schedule_id !== null)
+    assignment.status !== 'assigned' ||
+    !timeRangesOverlap(
+      absenceStart,
+      absenceEnd,
+      assignment.start_time,
+      assignment.end_time,
+    )
   ) {
+    return null;
+  }
+  if (assignment.assigned_staff_id === absentStaff.id) {
+    return `${absentStaff.display_name} is also absent.`;
+  }
+  if (
+    assignment.resolution_type === 'split_coverage' &&
+    segments.some(
+      (segment) =>
+        segment.assignment_id === assignment.id &&
+        segment.staff_id === absentStaff.id &&
+        timeRangesOverlap(
+          absenceStart,
+          absenceEnd,
+          segment.start_time,
+          segment.end_time,
+        ),
+    )
+  ) {
+    return `${absentStaff.display_name}, who was providing split coverage, is also absent.`;
+  }
+  const details = detailsRecord(assignment.resolution_details_json);
+  const receivingStaffId = details.receivingStaffId;
+  const receivingStaffIds = details.receivingStaffIds;
+  const includesAbsentRecipient =
+    receivingStaffId === absentStaff.id ||
+    (Array.isArray(receivingStaffIds) &&
+      receivingStaffIds.includes(absentStaff.id));
+  if (!includesAbsentRecipient) return null;
+  if (assignment.resolution_type === 'combine_class') {
+    return `${absentStaff.display_name}, who was receiving the combined class, is also absent.`;
+  }
+  if (assignment.resolution_type === 'redistribution') {
+    return `${absentStaff.display_name}, who was receiving part of the redistributed class, is also absent.`;
+  }
+  return `${absentStaff.display_name}, who was part of the current resolution, is also absent.`;
+}
+
+function assertPlanSource(plan: PlanRow): void {
+  if (plan.schedule_version_id === null && plan.special_schedule_id === null) {
     throw new HttpError(
       500,
       'invalid_schedule_source',
-      'The Sub Plan must pin exactly one schedule source.',
+      'The Sub Plan must pin a normal Schedule Version, a Special Schedule, or both.',
     );
   }
 }
@@ -2299,6 +2307,15 @@ function periodEntryDto(entry: WorkloadPlanEntryRow) {
     startTime: entry.start_time,
     endTime: entry.end_time,
     activityType: entry.activity_type,
+  };
+}
+
+function availabilityEntryDto(entry: EntryRow) {
+  return {
+    startTime: entry.start_time,
+    endTime: entry.end_time,
+    activityType: entry.activity_type,
+    description: entry.description,
   };
 }
 

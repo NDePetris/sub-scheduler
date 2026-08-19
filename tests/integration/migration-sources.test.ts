@@ -329,5 +329,33 @@ describe('exclusive schedule-source migration', () => {
         `SELECT COUNT(*) AS count FROM staff WHERE is_school_sub = 1`,
       ).first(),
     ).toEqual({ count: 2 });
+
+    const historicalContextMigration = testEnv.TEST_MIGRATIONS.filter(
+      (migration) =>
+        migration.name === '0007_pin_normal_context_for_special_plans.sql',
+    );
+    await applyD1Migrations(testEnv.UPGRADE_DB, historicalContextMigration);
+    expect(
+      await testEnv.UPGRADE_DB.prepare(
+        `SELECT daily_sub_plan_id FROM assignments WHERE id = 'migration_assignment'`,
+      ).first(),
+    ).toMatchObject({ daily_sub_plan_id: 'migration_special_plan' });
+    await expect(
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO daily_sub_plans (
+           id, date, day_type, schedule_version_id, special_schedule_id,
+           status, created_by, updated_by
+         ) VALUES ('valid_both', '2026-02-04', 'A', 'migration_normal',
+                   'migration_special', 'draft', 'migration_actor', 'migration_actor')`,
+      ).run(),
+    ).resolves.toBeTruthy();
+    await expect(
+      testEnv.UPGRADE_DB.prepare(
+        `INSERT INTO daily_sub_plans (
+           id, date, day_type, status, created_by, updated_by
+         ) VALUES ('invalid_neither', '2026-02-05', 'A', 'draft',
+                   'migration_actor', 'migration_actor')`,
+      ).run(),
+    ).rejects.toThrow();
   });
 });
