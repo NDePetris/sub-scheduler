@@ -170,6 +170,15 @@ describe('MVP planning domain', () => {
     });
   });
 
+  it('treats an explicit Off-site block as unavailable before open-gap inference', () => {
+    const result = classifyScheduleAvailability(
+      [{ startTime: '09:00', endTime: '10:00', activityType: 'off_site' }],
+      { startTime: '09:20', endTime: '09:40' },
+    );
+    expect(result).toMatchObject({ availability: 'off_site' });
+    expect(result.conflictingEntries).toHaveLength(1);
+  });
+
   it.each([
     ['09:00', '09:25', 0.5],
     ['09:00', '09:50', 1],

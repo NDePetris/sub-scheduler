@@ -38,6 +38,7 @@ describe('initial migration and local seed', () => {
         'staged_schedule_entries',
         'schedule_import_issues',
         'staff_aliases',
+        'school_calendar_dates',
       ]),
     );
   });

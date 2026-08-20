@@ -232,6 +232,21 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
             selected {detail.plan.dayType}.
           </div>
         )}
+      {detail &&
+        (!detail.plan.calendar.isSchoolDay ||
+          detail.plan.calendar.isBlackoutDay ||
+          detail.plan.calendar.specialScheduleExpectedWarning) && (
+          <div
+            className="border-border bg-muted/50 text-muted-foreground rounded-md border px-3 py-2 text-xs"
+            role="status"
+          >
+            {!detail.plan.calendar.isSchoolDay && 'Non-school day. '}
+            {detail.plan.calendar.isBlackoutDay && 'Blackout day. '}
+            {detail.plan.calendar.specialScheduleExpectedWarning &&
+              'Special Schedule expected, but none is configured. '}
+            {detail.plan.calendar.label}
+          </div>
+        )}
       {error && <ErrorBanner message={error} />}
       {detail?.absences
         .filter((absence) => absence.informationalWarning)

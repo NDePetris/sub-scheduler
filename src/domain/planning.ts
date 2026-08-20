@@ -129,7 +129,8 @@ export interface AvailabilityScheduleEntry extends CoverageInterval {
   readonly activityType: string;
 }
 
-export type ScheduleAvailability = 'plan' | 'admin' | 'open' | 'manual';
+export type ScheduleAvailability =
+  'plan' | 'admin' | 'open' | 'manual' | 'off_site';
 
 export interface ScheduleAvailabilityResult<
   T extends AvailabilityScheduleEntry = AvailabilityScheduleEntry,
@@ -151,6 +152,9 @@ export function classifyScheduleAvailability<
   const conflictingEntries = overlappingEntries.filter(
     (entry) => entry.activityType !== 'plan' && entry.activityType !== 'admin',
   );
+  if (overlappingEntries.some((entry) => entry.activityType === 'off_site')) {
+    return { availability: 'off_site', conflictingEntries };
+  }
   if (
     coversTimeRange(
       overlappingEntries.filter((entry) => entry.activityType === 'plan'),

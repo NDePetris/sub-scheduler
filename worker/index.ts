@@ -13,6 +13,7 @@ import {
 } from '../src/features/schedule-import/read-workbook';
 import { schoolScheduleAdapter } from '../src/features/schedule-import/school-schedule-adapter';
 import { ApplicationRepository } from './db/application-repository';
+import { CalendarRepository } from './db/calendar-repository';
 import { ImportRepository } from './db/import-repository';
 import { PlanningRepository } from './db/planning-repository';
 import { ScheduleRepository } from './db/schedule-repository';
@@ -27,6 +28,25 @@ const timeSchema = z
   .string()
   .refine(isLocalTime, 'Use a valid 24-hour HH:MM time.');
 const dayTypeSchema = z.enum(['A', 'B']);
+const calendarDateSchema = z
+  .object({
+    date: dateSchema,
+    expectedDayType: dayTypeSchema.nullable().default(null),
+    isSchoolDay: z.boolean().default(true),
+    isBlackoutDay: z.boolean().default(false),
+    expectsSpecialSchedule: z.boolean().default(false),
+    label: z.string().trim().max(240).nullable().default(null),
+  })
+  .superRefine((value, context) => {
+    if (!value.isSchoolDay && value.expectedDayType)
+      context.addIssue({
+        code: 'custom',
+        message: 'Non-school dates cannot have an A/B designation.',
+      });
+  });
+const calendarReplaceSchema = z.object({
+  records: z.array(calendarDateSchema).max(1000),
+});
 
 const ensurePlanSchema = z.object({
   date: dateSchema.refine(isSchoolDay, 'Daily Sub Plans require a weekday.'),
@@ -210,6 +230,7 @@ export default {
       }
 
       const applicationRepository = new ApplicationRepository(env.DB);
+      const calendarRepository = new CalendarRepository(env.DB);
       if (url.pathname === '/api/health' && request.method === 'GET') {
         await applicationRepository.checkConnection();
         return jsonSuccess(
@@ -344,6 +365,41 @@ export default {
           {
             rooms: await applicationRepository.listRooms(
               url.searchParams.get('includeInactive') === 'true',
+            ),
+          },
+          requestId,
+        );
+      }
+
+      if (url.pathname === '/api/calendar-dates' && request.method === 'GET') {
+        const start = url.searchParams.get('start') ?? undefined;
+        const end = url.searchParams.get('end') ?? undefined;
+        if (
+          (start && !isSchoolDate(start)) ||
+          (end && !isSchoolDate(end)) ||
+          (start && end && start > end)
+        ) {
+          throw new HttpError(
+            400,
+            'invalid_calendar_range',
+            'Use a valid calendar date range.',
+          );
+        }
+        return jsonSuccess(
+          { records: await calendarRepository.list(start, end) },
+          requestId,
+        );
+      }
+      if (
+        url.pathname === '/api/calendar-dates/replace' &&
+        request.method === 'PUT'
+      ) {
+        const body = calendarReplaceSchema.parse(await readJson(request));
+        return jsonSuccess(
+          {
+            records: await calendarRepository.replace(
+              body.records,
+              context.actor.id,
             ),
           },
           requestId,

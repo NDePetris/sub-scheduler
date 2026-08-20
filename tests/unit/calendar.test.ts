@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   compareSchoolDates,
+  calendarExpectedDayType,
   isSchoolDay,
   localTimeToMinutes,
   normalizeToSchoolDay,
@@ -36,5 +37,10 @@ describe('school calendar values', () => {
     expect(shiftSchoolDay('2026-11-06', 1)).toBe('2026-11-09');
     expect(shiftSchoolDay('2026-11-09', -1)).toBe('2026-11-06');
     expect(normalizeToSchoolDay('2026-11-14')).toBe('2026-11-16');
+  });
+
+  it('uses imported calendar A/B metadata ahead of rotation fallback', () => {
+    expect(calendarExpectedDayType({ expectedDayType: 'B' }, 'A')).toBe('B');
+    expect(calendarExpectedDayType(null, 'A')).toBe('A');
   });
 });

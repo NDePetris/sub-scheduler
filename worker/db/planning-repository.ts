@@ -13,7 +13,10 @@ import {
   type CandidateAvailability,
   type SplitSegmentInput,
 } from '../../src/domain/planning';
-import { isSchoolDay } from '../../src/domain/calendar';
+import {
+  calendarExpectedDayType,
+  isSchoolDay,
+} from '../../src/domain/calendar';
 import { normalizeStaffRole } from '../../src/domain/staff';
 import { HttpError } from '../http';
 
@@ -31,6 +34,11 @@ interface PlanRow {
   schedule_name: string | null;
   special_schedule_name: string | null;
   effective_from: string | null;
+  calendar_expected_day_type: DayType | null;
+  calendar_is_school_day: number | null;
+  calendar_is_blackout_day: number | null;
+  calendar_expects_special_schedule: number | null;
+  calendar_label: string | null;
 }
 
 interface ScheduleResolutionRow {
@@ -230,11 +238,12 @@ export class PlanningRepository {
     }
 
     const resolved = await this.resolveSchedule(date);
+    const calendar = await this.calendarForDate(date);
+    const fallback = resolved.normal
+      ? expectedDayType(date, resolved.normal.effective_from)
+      : 'A';
     const dayType =
-      requestedDayType ??
-      (resolved.normal
-        ? expectedDayType(date, resolved.normal.effective_from)
-        : 'A');
+      requestedDayType ?? calendarExpectedDayType(calendar, fallback);
     const planId = crypto.randomUUID();
     await this.db
       .prepare(
@@ -367,9 +376,20 @@ export class PlanningRepository {
         id: plan.id,
         date: plan.date,
         dayType: plan.day_type,
-        expectedDayType: plan.effective_from
-          ? expectedDayType(plan.date, plan.effective_from)
-          : null,
+        expectedDayType:
+          plan.calendar_expected_day_type ??
+          (plan.effective_from
+            ? expectedDayType(plan.date, plan.effective_from)
+            : null),
+        calendar: {
+          isSchoolDay: plan.calendar_is_school_day !== 0,
+          isBlackoutDay: plan.calendar_is_blackout_day === 1,
+          expectsSpecialSchedule: plan.calendar_expects_special_schedule === 1,
+          label: plan.calendar_label,
+          specialScheduleExpectedWarning:
+            plan.calendar_expects_special_schedule === 1 &&
+            !plan.special_schedule_id,
+        },
         scheduleVersionId: plan.schedule_version_id,
         scheduleName: plan.schedule_name,
         specialScheduleId: plan.special_schedule_id,
@@ -1721,9 +1741,11 @@ export class PlanningRepository {
     if (existing) return { plan: existing, insert: null };
     const resolved = await this.resolveSchedule(date);
     const planId = crypto.randomUUID();
-    const dayType = resolved.normal
+    const calendar = await this.calendarForDate(date);
+    const fallback = resolved.normal
       ? expectedDayType(date, resolved.normal.effective_from)
       : 'A';
+    const dayType = calendarExpectedDayType(calendar, fallback);
     return {
       plan: {
         id: planId,
@@ -1737,6 +1759,15 @@ export class PlanningRepository {
         schedule_name: resolved.normal?.name ?? null,
         special_schedule_name: resolved.special?.name ?? null,
         effective_from: resolved.normal?.effective_from ?? null,
+        calendar_expected_day_type: calendar?.expectedDayType ?? null,
+        calendar_is_school_day: calendar ? Number(calendar.isSchoolDay) : null,
+        calendar_is_blackout_day: calendar
+          ? Number(calendar.isBlackoutDay)
+          : null,
+        calendar_expects_special_schedule: calendar
+          ? Number(calendar.expectsSpecialSchedule)
+          : null,
+        calendar_label: calendar?.label ?? null,
       },
       insert: this.db
         .prepare(
@@ -1793,16 +1824,54 @@ export class PlanningRepository {
     return { normal: normal.results[0]!, special };
   }
 
+  private async calendarForDate(date: string): Promise<{
+    expectedDayType: DayType | null;
+    isSchoolDay: boolean;
+    isBlackoutDay: boolean;
+    expectsSpecialSchedule: boolean;
+    label: string | null;
+  } | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT expected_day_type, is_school_day, is_blackout_day,
+              expects_special_schedule, label
+         FROM school_calendar_dates WHERE date = ?`,
+      )
+      .bind(date)
+      .first<{
+        expected_day_type: DayType | null;
+        is_school_day: number;
+        is_blackout_day: number;
+        expects_special_schedule: number;
+        label: string | null;
+      }>();
+    return row
+      ? {
+          expectedDayType: row.expected_day_type,
+          isSchoolDay: row.is_school_day === 1,
+          isBlackoutDay: row.is_blackout_day === 1,
+          expectsSpecialSchedule: row.expects_special_schedule === 1,
+          label: row.label,
+        }
+      : null;
+  }
+
   private async findPlan(date: string): Promise<PlanRow | null> {
     return this.db
       .prepare(
         `SELECT p.id, p.date, p.day_type, p.schedule_version_id,
                 p.special_schedule_id, p.status, p.finalized_at, p.finalized_by,
                 sv.name AS schedule_name, ss.name AS special_schedule_name,
-                sv.effective_from
+                sv.effective_from,
+                c.expected_day_type AS calendar_expected_day_type,
+                c.is_school_day AS calendar_is_school_day,
+                c.is_blackout_day AS calendar_is_blackout_day,
+                c.expects_special_schedule AS calendar_expects_special_schedule,
+                c.label AS calendar_label
            FROM daily_sub_plans p
       LEFT JOIN schedule_versions sv ON sv.id = p.schedule_version_id
       LEFT JOIN special_schedules ss ON ss.id = p.special_schedule_id
+      LEFT JOIN school_calendar_dates c ON c.date = p.date
           WHERE p.date = ?`,
       )
       .bind(date)
@@ -1815,10 +1884,16 @@ export class PlanningRepository {
         `SELECT p.id, p.date, p.day_type, p.schedule_version_id,
                 p.special_schedule_id, p.status, p.finalized_at, p.finalized_by,
                 sv.name AS schedule_name, ss.name AS special_schedule_name,
-                sv.effective_from
+                sv.effective_from,
+                c.expected_day_type AS calendar_expected_day_type,
+                c.is_school_day AS calendar_is_school_day,
+                c.is_blackout_day AS calendar_is_blackout_day,
+                c.expects_special_schedule AS calendar_expects_special_schedule,
+                c.label AS calendar_label
            FROM daily_sub_plans p
       LEFT JOIN schedule_versions sv ON sv.id = p.schedule_version_id
       LEFT JOIN special_schedules ss ON ss.id = p.special_schedule_id
+      LEFT JOIN school_calendar_dates c ON c.date = p.date
           WHERE p.id = ?`,
       )
       .bind(id)

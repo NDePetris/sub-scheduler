@@ -59,6 +59,7 @@ interface StagedEntryRow {
     | 'lunch'
     | 'duty'
     | 'after_school'
+    | 'off_site'
     | 'other';
   category:
     | 'PRI'

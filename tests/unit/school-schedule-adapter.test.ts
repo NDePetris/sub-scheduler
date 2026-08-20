@@ -90,4 +90,41 @@ describe('sanitized school schedule adapter', () => {
       requiresSub: false,
     });
   });
+
+  it('recognizes Off-site and conservative trailing room identifiers', () => {
+    const result = schoolScheduleAdapter.parse({
+      sheets: [
+        {
+          name: 'SY27 Teacher Schedules',
+          mergedCells: [],
+          rows: [
+            [null, null],
+            [null, 'Test Teacher'],
+            [null, null],
+            ['8:00 - 8:30', 'MS Lunch (16)'],
+            ['8:30 - 9:00', 'Off-site'],
+            ['9:00 - 9:30', 'Advisory (special rotation)'],
+          ],
+        },
+      ],
+    });
+    expect(result.candidate?.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          description: 'MS Lunch',
+          roomDisplayValue: '16',
+          activityType: 'lunch',
+        }),
+        expect.objectContaining({
+          description: 'Off-site',
+          activityType: 'off_site',
+          requiresSub: false,
+        }),
+        expect.objectContaining({
+          description: 'Advisory (special rotation)',
+          roomDisplayValue: null,
+        }),
+      ]),
+    );
+  });
 });

@@ -3,6 +3,24 @@ const LOCAL_TIME_PATTERN = /^(\d{2}):(\d{2})$/;
 
 export type SchoolDate = string & { readonly __schoolDate: unique symbol };
 export type LocalTime = string & { readonly __localTime: unique symbol };
+export type CalendarDayType = 'A' | 'B';
+
+export interface SchoolCalendarDateMetadata {
+  readonly date: string;
+  readonly expectedDayType: CalendarDayType | null;
+  readonly isSchoolDay: boolean;
+  readonly isBlackoutDay: boolean;
+  readonly expectsSpecialSchedule: boolean;
+  readonly label: string | null;
+}
+
+/** Calendar metadata wins when supplied; rotation remains the legacy fallback. */
+export function calendarExpectedDayType(
+  metadata: Pick<SchoolCalendarDateMetadata, 'expectedDayType'> | null,
+  fallback: CalendarDayType,
+): CalendarDayType {
+  return metadata?.expectedDayType ?? fallback;
+}
 
 export function parseSchoolDate(value: string): SchoolDate {
   const match = SCHOOL_DATE_PATTERN.exec(value);

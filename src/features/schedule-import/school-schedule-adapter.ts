@@ -16,6 +16,7 @@ export type ImportedActivityType =
   | 'lunch'
   | 'duty'
   | 'after_school'
+  | 'off_site'
   | 'other';
 
 export type ImportedCategory =
@@ -196,16 +197,17 @@ function parseEntries(
         continue;
       }
 
-      const classification = classifyActivity(description);
+      const parsed = parseTrailingRoom(description, header.room);
+      const classification = classifyActivity(parsed.description);
       entries.push({
         sourceSheet: sheet.name,
         sourceCell,
         staffDisplayValue: header.staff,
-        roomDisplayValue: header.room,
+        roomDisplayValue: parsed.room ?? header.room,
         dayType: header.dayType,
         startTime: timeRange.start,
         endTime: endingRange.end,
-        description,
+        description: parsed.description,
         ...classification,
       });
     }
@@ -219,6 +221,13 @@ function classifyActivity(description: string): {
   requiresSub: boolean;
 } {
   const normalized = description.trim().toLocaleLowerCase('en-US');
+  if (normalized === 'off-site' || normalized === 'offsite') {
+    return {
+      activityType: 'off_site',
+      category: 'AFTER_SCHOOL_OTHER',
+      requiresSub: false,
+    };
+  }
   if (normalized === 'plan') {
     return { activityType: 'plan', category: 'PLAN_ADMIN', requiresSub: false };
   }
@@ -272,6 +281,17 @@ function classifyActivity(description: string): {
     category: category ?? 'AFTER_SCHOOL_OTHER',
     requiresSub: true,
   };
+}
+
+/** Room tokens are deliberately narrow so meaningful parentheticals remain text. */
+function parseTrailingRoom(
+  description: string,
+  explicitRoom: string | null,
+): { description: string; room: string | null } {
+  if (explicitRoom) return { description, room: null };
+  const match = /^(.*?)\s*\(([0-9]{1,4}[A-Za-z]?)\)\s*$/.exec(description);
+  if (!match?.[1] || !match[2]) return { description, room: null };
+  return { description: match[1].trim(), room: match[2] };
 }
 
 function findConflicts(entries: readonly StagedScheduleEntry[]): ImportIssue[] {

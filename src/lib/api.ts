@@ -134,6 +134,13 @@ export interface PlanDetail {
     readonly date: string;
     readonly dayType: 'A' | 'B';
     readonly expectedDayType: 'A' | 'B' | null;
+    readonly calendar: {
+      readonly isSchoolDay: boolean;
+      readonly isBlackoutDay: boolean;
+      readonly expectsSpecialSchedule: boolean;
+      readonly label: string | null;
+      readonly specialScheduleExpectedWarning: boolean;
+    };
     readonly scheduleVersionId: string | null;
     readonly scheduleName: string | null;
     readonly specialScheduleId: string | null;
@@ -183,6 +190,35 @@ export interface PlanDetail {
     readonly editedText: string;
     readonly generatedAt: string;
   } | null;
+}
+
+export interface CalendarDateData {
+  readonly date: string;
+  readonly expectedDayType: 'A' | 'B' | null;
+  readonly isSchoolDay: boolean;
+  readonly isBlackoutDay: boolean;
+  readonly expectsSpecialSchedule: boolean;
+  readonly label: string | null;
+}
+
+export async function listCalendarDates(): Promise<CalendarDateData[]> {
+  return (
+    await apiRequest<{ records: CalendarDateData[] }>('/api/calendar-dates')
+  ).records;
+}
+
+export async function replaceCalendarDates(
+  records: readonly CalendarDateData[],
+): Promise<CalendarDateData[]> {
+  return (
+    await apiRequest<{ records: CalendarDateData[] }>(
+      '/api/calendar-dates/replace',
+      {
+        method: 'PUT',
+        body: JSON.stringify({ records }),
+      },
+    )
+  ).records;
 }
 
 export interface CandidatePreview {
