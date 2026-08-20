@@ -176,7 +176,13 @@ export function buildFullScheduleTimeline(
           isSplitSegment: true,
         });
       }
-    } else if (assignment.assignedStaff) {
+    } else if (
+      assignment.assignedStaff &&
+      !(
+        assignment.resolutionType === 'solo_coverage' &&
+        recordDetails(assignment.resolutionDetails).soloKind === 'scheduled'
+      )
+    ) {
       ensureRow(
         assignment.assignedStaff.id,
         assignment.assignedStaff.displayName,
@@ -285,6 +291,8 @@ export function assignmentResolutionLabel(
     | 'resolutionDetails'
   >,
 ): string {
+  if (assignment.resolutionType === 'solo_coverage' && assignment.assignedStaff)
+    return `${assignment.assignedStaff.displayName} solo`;
   if (assignment.assignedStaff) return assignment.assignedStaff.displayName;
   if (assignment.segments.length > 0)
     return assignment.segments.map((segment) => segment.staffName).join(' / ');

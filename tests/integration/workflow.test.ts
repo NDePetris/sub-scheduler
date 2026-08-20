@@ -25,6 +25,154 @@ function data<T>(payload: unknown): T {
 }
 
 describe('persisted MVP workflow', () => {
+  it('resolves a structurally shared duty once with scheduled and replacement Solo Coverage', async () => {
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(
+        `INSERT INTO schedule_entries (id, schedule_version_id, staff_id, day_type, start_time, end_time, activity_type, category, description, room_id, requires_sub)
+         VALUES ('shared_avery', 'schedule_2026_fall', 'staff_avery_bennett', 'ALL', '11:20', '12:00', 'duty', 'LUNCH', 'MS Lunch', 'room_ms_212', 1),
+                ('shared_jordan', 'schedule_2026_fall', 'staff_jordan_kim', 'ALL', '11:20', '12:00', 'duty', 'LUNCH', 'MS Lunch', 'room_ms_212', 1),
+                ('shared_morgan_plan', 'schedule_2026_fall', 'staff_morgan_ellis', 'ALL', '11:20', '12:00', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0)`,
+      ),
+    ]);
+
+    const scheduledDate = '2026-12-17';
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_avery_bennett',
+      startDate: scheduledDate,
+      endDate: scheduledDate,
+      startTime: null,
+      endTime: null,
+    });
+    const scheduledDetail = data<{
+      detail: {
+        assignments: Array<{
+          id: string;
+          description: string;
+          sharedResponsibilityKey: string | null;
+        }>;
+      };
+    }>((await api(`/api/plans/${scheduledDate}`)).payload).detail;
+    const scheduledAssignment = scheduledDetail.assignments.find(
+      (item) => item.description === 'MS Lunch',
+    );
+    expect(scheduledAssignment?.sharedResponsibilityKey).toBeTruthy();
+    const scheduledCandidates = data<{
+      soloCandidates: Array<{ id: string; kind: string }>;
+    }>(
+      (await api(`/api/assignments/${scheduledAssignment?.id}/candidates`))
+        .payload,
+    ).soloCandidates;
+    expect(
+      scheduledCandidates.find((item) => item.id === 'staff_jordan_kim'),
+    ).toMatchObject({ kind: 'scheduled' });
+    const scheduledResolution = await api(
+      `/api/assignments/${scheduledAssignment?.id}/resolve`,
+      'POST',
+      {
+        action: 'solo_coverage',
+        staffId: 'staff_jordan_kim',
+        assignAnyway: false,
+      },
+    );
+    expect(scheduledResolution.response.status).toBe(200);
+    const scheduledAssignmentAfter = data<{
+      detail: {
+        assignments: Array<{
+          description: string;
+          resolutionType: string;
+          assignedStaff: { id: string } | null;
+        }>;
+      };
+    }>(scheduledResolution.payload).detail.assignments.find(
+      (item) => item.description === 'MS Lunch',
+    );
+    expect(scheduledAssignmentAfter).toMatchObject({
+      resolutionType: 'solo_coverage',
+      assignedStaff: { id: 'staff_jordan_kim' },
+    });
+
+    const replacementDate = '2026-12-18';
+    for (const staffId of ['staff_avery_bennett', 'staff_jordan_kim']) {
+      await api('/api/absences', 'POST', {
+        staffId,
+        startDate: replacementDate,
+        endDate: replacementDate,
+        startTime: null,
+        endTime: null,
+      });
+    }
+    const replacementDetail = data<{
+      detail: {
+        assignments: Array<{
+          id: string;
+          description: string;
+          sharedResponsibilityKey: string | null;
+        }>;
+      };
+    }>((await api(`/api/plans/${replacementDate}`)).payload).detail;
+    const sharedAssignments = replacementDetail.assignments.filter(
+      (item) => item.description === 'MS Lunch',
+    );
+    expect(sharedAssignments).toHaveLength(2);
+    expect(
+      new Set(sharedAssignments.map((item) => item.sharedResponsibilityKey))
+        .size,
+    ).toBe(1);
+    const replacementCandidates = data<{
+      soloCandidates: Array<{ id: string; kind: string }>;
+    }>(
+      (await api(`/api/assignments/${sharedAssignments[0]?.id}/candidates`))
+        .payload,
+    ).soloCandidates;
+    expect(
+      replacementCandidates.find((item) => item.id === 'staff_morgan_ellis'),
+    ).toMatchObject({ kind: 'replacement' });
+    const replacementResolution = await api(
+      `/api/assignments/${sharedAssignments[0]?.id}/resolve`,
+      'POST',
+      {
+        action: 'solo_coverage',
+        staffId: 'staff_morgan_ellis',
+        assignAnyway: false,
+      },
+    );
+    const replacementAfter = data<{
+      detail: {
+        assignments: Array<{
+          description: string;
+          status: string;
+          resolutionType: string;
+          assignedStaff: { id: string } | null;
+        }>;
+      };
+    }>(replacementResolution.payload).detail.assignments.filter(
+      (item) => item.description === 'MS Lunch',
+    );
+    expect(replacementAfter).toHaveLength(2);
+    expect(replacementAfter.every((item) => item.status === 'assigned')).toBe(
+      true,
+    );
+    expect(
+      replacementAfter.every(
+        (item) =>
+          item.resolutionType === 'solo_coverage' &&
+          item.assignedStaff?.id === 'staff_morgan_ellis',
+      ),
+    ).toBe(true);
+    const workloadRows = await testEnv.DB.prepare(
+      `SELECT SUM(counts_toward_workload) AS count FROM assignments
+          WHERE daily_sub_plan_id = (SELECT id FROM daily_sub_plans WHERE date = ?)
+            AND description = 'MS Lunch'`,
+    )
+      .bind(replacementDate)
+      .first<{ count: number }>();
+    expect(workloadRows?.count).toBe(1);
+    await testEnv.DB.prepare(
+      `UPDATE schedule_entries SET requires_sub = 0
+          WHERE id IN ('shared_avery', 'shared_jordan')`,
+    ).run();
+  });
+
   it('uses normalized Teacher records and stable IDs for repeated Add Absence submissions', async () => {
     const staffResult = await api('/api/staff');
     const staff = data<{

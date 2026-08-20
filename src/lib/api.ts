@@ -88,6 +88,7 @@ export interface PlanAssignment {
   readonly id: string;
   readonly sourceScheduleEntryId: string | null;
   readonly sourceSpecialScheduleEntryId: string | null;
+  readonly sharedResponsibilityKey: string | null;
   readonly startTime: string;
   readonly endTime: string;
   readonly responsibilityType:
@@ -106,6 +107,7 @@ export interface PlanAssignment {
     | 'Available'
     | 'Manual'
     | 'Override'
+    | 'Scheduled'
     | null;
   readonly resolutionType: string | null;
   readonly resolutionDetails: unknown;
@@ -240,6 +242,13 @@ export interface CandidatePreview {
   readonly workloadKnown: boolean;
   readonly threshold: number;
   readonly windowDays: number;
+}
+
+export interface SoloCandidate {
+  readonly id: string;
+  readonly displayName: string;
+  readonly kind: 'scheduled' | 'replacement';
+  readonly conflicts: readonly string[];
 }
 
 export interface ScheduleImportDetail {
@@ -513,6 +522,21 @@ export async function getCandidates(
   return result.candidates;
 }
 
+export async function getCandidatesWithSolo(
+  assignmentId: string,
+  signal?: AbortSignal,
+): Promise<{
+  readonly candidates: CandidatePreview[];
+  readonly soloCandidates: SoloCandidate[];
+}> {
+  return apiRequest<{
+    candidates: CandidatePreview[];
+    soloCandidates: SoloCandidate[];
+  }>(`/api/assignments/${encodeURIComponent(assignmentId)}/candidates`, {
+    signal,
+  });
+}
+
 export async function resolveAssignment(
   assignmentId: string,
   input: AssignmentResolutionInput,
@@ -527,6 +551,11 @@ export async function resolveAssignment(
 export type AssignmentResolutionInput =
   | {
       readonly action: 'assign';
+      readonly staffId: string;
+      readonly assignAnyway: boolean;
+    }
+  | {
+      readonly action: 'solo_coverage';
       readonly staffId: string;
       readonly assignAnyway: boolean;
     }

@@ -94,6 +94,8 @@ interface AssignmentRow {
   id: string;
   daily_sub_plan_id: string;
   absence_id: string;
+  shared_responsibility_key: string | null;
+  counts_toward_workload: number;
   source_schedule_entry_id: string | null;
   source_special_schedule_entry_id: string | null;
   start_time: string;
@@ -207,6 +209,13 @@ interface CandidatePreview {
   readonly windowDays: number;
 }
 
+interface SoloCandidate {
+  readonly id: string;
+  readonly displayName: string;
+  readonly kind: 'scheduled' | 'replacement';
+  readonly conflicts: readonly string[];
+}
+
 interface CandidateEvaluationContext {
   readonly entries: readonly EntryRow[];
   readonly absences: readonly AbsenceRow[];
@@ -301,6 +310,7 @@ export class PlanningRepository {
         : undefined;
       return {
         id: assignment.id,
+        sharedResponsibilityKey: assignment.shared_responsibility_key,
         sourceScheduleEntryId: assignment.source_schedule_entry_id,
         sourceSpecialScheduleEntryId:
           assignment.source_special_schedule_entry_id,
@@ -351,7 +361,9 @@ export class PlanningRepository {
     ).length;
     const assignedStaffIds = new Set([
       ...assignments.flatMap((assignment) =>
-        assignment.assigned_staff_id && assignment.assigned_is_school_sub !== 1
+        assignment.assigned_staff_id &&
+        assignment.assigned_is_school_sub !== 1 &&
+        assignment.counts_toward_workload === 1
           ? [assignment.assigned_staff_id]
           : [],
       ),
@@ -587,16 +599,21 @@ export class PlanningRepository {
         const sourceSpecialId = planSeed.plan.special_schedule_id
           ? source.id
           : null;
+        const sharedResponsibilityKey = sharedResponsibilityKeyForEntry(
+          source,
+          planSeed.plan,
+        );
         statements.push(
           this.db
             .prepare(
               `INSERT INTO assignments (
                  id, daily_sub_plan_id, absence_id, source_schedule_entry_id,
                  source_special_schedule_entry_id, start_time, end_time,
+                 shared_responsibility_key,
                  responsibility_type, description, room_id, default_action_id,
                  assigned_staff_id, resolution_type, resolution_details_json,
                  status, is_default, conflict_explanation, updated_by
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT DO NOTHING`,
             )
             .bind(
@@ -607,6 +624,7 @@ export class PlanningRepository {
               sourceSpecialId,
               affectedEntry.startTime,
               affectedEntry.endTime,
+              sharedResponsibilityKey,
               responsibilityType(source.activity_type),
               source.description,
               defaultAction?.room_id ?? source.room_id,
@@ -632,7 +650,11 @@ export class PlanningRepository {
       readonly startTime: string;
       readonly endTime: string;
     },
-  ): Promise<{ assignmentId: string; candidates: CandidatePreview[] }> {
+  ): Promise<{
+    assignmentId: string;
+    candidates: CandidatePreview[];
+    soloCandidates: SoloCandidate[];
+  }> {
     const [assignment, settings] = await Promise.all([
       this.assignmentById(assignmentId),
       this.settings(),
@@ -777,10 +799,102 @@ export class PlanningRepository {
         windowDays: settings.workload_window_days,
       };
     });
+    const soloCandidates = await this.soloCandidates(
+      assignment,
+      plan,
+      entries,
+      absences,
+      assignments,
+      segments,
+    );
     return {
       assignmentId,
       candidates: rankCandidates(previews),
+      soloCandidates,
     };
+  }
+
+  async soloCoverage(
+    assignmentId: string,
+    staffId: string,
+    assignAnyway: boolean,
+    actorId: string,
+  ) {
+    const assignment = await this.assignmentById(assignmentId);
+    await this.assertDraft(assignment.daily_sub_plan_id);
+    if (!assignment.shared_responsibility_key) {
+      throw new HttpError(
+        400,
+        'solo_not_available',
+        'Solo Coverage is available only for shared responsibilities.',
+      );
+    }
+    const plan = await this.planById(assignment.daily_sub_plan_id);
+    const [entries, absences, assignments] = await Promise.all([
+      this.entriesForPlan(plan),
+      this.absencesForDate(plan.date),
+      this.assignmentsForPlan(plan.id),
+    ]);
+    const segments = await this.segmentsForAssignments(
+      assignments.map((item) => item.id),
+    );
+    const candidates = await this.soloCandidates(
+      assignment,
+      plan,
+      entries,
+      absences,
+      assignments,
+      segments,
+    );
+    const candidate = candidates.find((item) => item.id === staffId);
+    if (!candidate)
+      throw new HttpError(
+        400,
+        'invalid_solo_candidate',
+        'Choose an eligible Solo Coverage staff member.',
+      );
+    if (candidate.conflicts.length && !assignAnyway) {
+      throw new HttpError(
+        409,
+        'override_acknowledgement_required',
+        candidate.conflicts.join(' '),
+      );
+    }
+    const siblings = assignments.filter(
+      (item) =>
+        item.shared_responsibility_key === assignment.shared_responsibility_key,
+    );
+    const now = new Date().toISOString();
+    const statements: D1PreparedStatement[] = [];
+    siblings.forEach((sibling, index) => {
+      statements.push(
+        this.db
+          .prepare('DELETE FROM assignment_segments WHERE assignment_id = ?')
+          .bind(sibling.id),
+      );
+      statements.push(
+        this.db
+          .prepare(
+            `UPDATE assignments SET assigned_staff_id = ?, resolution_type = 'solo_coverage',
+             resolution_details_json = ?, status = 'assigned', is_default = 0,
+             conflict_explanation = NULL, counts_toward_workload = ?,
+             override_acknowledged_at = ?, override_acknowledged_by = ?, updated_by = ?, updated_at = ?
+           WHERE id = ?`,
+          )
+          .bind(
+            staffId,
+            JSON.stringify({ staffId, soloKind: candidate.kind }),
+            candidate.kind === 'replacement' && index === 0 ? 1 : 0,
+            candidate.conflicts.length ? now : null,
+            candidate.conflicts.length ? actorId : null,
+            actorId,
+            now,
+            sibling.id,
+          ),
+      );
+    });
+    await this.db.batch(statements);
+    return this.getPlan(plan.date);
   }
 
   async assign(
@@ -1501,6 +1615,111 @@ export class PlanningRepository {
     );
   }
 
+  private async soloCandidates(
+    assignment: AssignmentRow,
+    plan: PlanRow,
+    entries: readonly EntryRow[],
+    absences: readonly AbsenceRow[],
+    assignments: readonly AssignmentRow[],
+    segments: readonly SegmentRow[],
+  ): Promise<SoloCandidate[]> {
+    if (!assignment.shared_responsibility_key) return [];
+    const sourceEntries = entries.filter(
+      (entry) =>
+        sharedResponsibilityKeyForEntry(entry, plan) ===
+        assignment.shared_responsibility_key,
+    );
+    const presentScheduled = sourceEntries.filter(
+      (entry) =>
+        !absences.some(
+          (absence) =>
+            absence.staff_id === entry.staff_id &&
+            timeRangesOverlap(
+              absence.start_time,
+              absence.end_time,
+              assignment.start_time,
+              assignment.end_time,
+            ),
+        ),
+    );
+    const scheduled = presentScheduled.map((entry) => {
+      const conflicts = coverageConflicts(
+        entry.staff_id,
+        assignment,
+        assignments,
+        segments,
+      );
+      return {
+        id: entry.staff_id,
+        displayName: entry.staff_name,
+        kind: 'scheduled' as const,
+        conflicts,
+      };
+    });
+    if (scheduled.length > 0) return uniqueSoloCandidates(scheduled);
+
+    const replacementPreview = await this.candidatesWithoutSolo(
+      assignment,
+      plan,
+      entries,
+      absences,
+      assignments,
+      segments,
+    );
+    return replacementPreview.map((candidate) => ({
+      id: candidate.id,
+      displayName: candidate.displayName,
+      kind: 'replacement' as const,
+      conflicts: candidate.conflicts,
+    }));
+  }
+
+  private async candidatesWithoutSolo(
+    assignment: AssignmentRow,
+    plan: PlanRow,
+    entries: readonly EntryRow[],
+    absences: readonly AbsenceRow[],
+    assignments: readonly AssignmentRow[],
+    segments: readonly SegmentRow[],
+  ): Promise<CandidatePreview[]> {
+    const staff = await this.db
+      .prepare(
+        `SELECT id, display_name, role, is_school_sub, standard_period_minutes FROM staff
+          WHERE is_active = 1 AND can_sub = 1 AND id <> ? ORDER BY display_name, id`,
+      )
+      .bind(assignment.absent_staff_id)
+      .all<StaffRow>();
+    return staff.results.map((person) => {
+      const check = evaluateCandidate(
+        plan,
+        person,
+        assignment.start_time,
+        assignment.end_time,
+        assignment.id,
+        { entries, absences, assignments, segments },
+      );
+      return {
+        id: person.id,
+        displayName: person.display_name,
+        role: normalizeStaffRole(person.role),
+        isSchoolSub: person.is_school_sub === 1,
+        isDefaultCandidate: false,
+        availability: check.sourceType,
+        availabilitySource: check.source,
+        conflicts: check.conflicts,
+        warnings: check.warnings,
+        currentBurden: 0,
+        proposedBurden: 0,
+        projectedBurden: 0,
+        standardPeriodMinutes: null,
+        standardPeriodSource: null,
+        workloadKnown: true,
+        threshold: 0,
+        windowDays: 0,
+      };
+    });
+  }
+
   private async activeStaff(staffId: string): Promise<StaffRow> {
     const staff = await this.db
       .prepare(
@@ -1558,7 +1777,7 @@ export class PlanningRepository {
            FROM assignments a
            JOIN daily_sub_plans p ON p.id = a.daily_sub_plan_id
            JOIN staff st ON st.id = a.assigned_staff_id
-          WHERE a.assigned_staff_id IS NOT NULL AND a.status = 'assigned'
+          WHERE a.assigned_staff_id IS NOT NULL AND a.status = 'assigned' AND a.counts_toward_workload = 1
             AND a.id <> ? AND p.date BETWEEN ? AND ?
           UNION ALL
          SELECT s.staff_id, p.date, p.day_type, p.schedule_version_id,
@@ -1568,7 +1787,7 @@ export class PlanningRepository {
            JOIN assignments a ON a.id = s.assignment_id
            JOIN daily_sub_plans p ON p.id = a.daily_sub_plan_id
            JOIN staff st ON st.id = s.staff_id
-          WHERE a.status = 'assigned' AND a.id <> ?
+          WHERE a.status = 'assigned' AND a.counts_toward_workload = 1 AND a.id <> ?
             AND p.date BETWEEN ? AND ?`,
       )
       .bind(
@@ -1975,7 +2194,8 @@ export class PlanningRepository {
   private async assignmentsForPlan(planId: string): Promise<AssignmentRow[]> {
     const result = await this.db
       .prepare(
-        `SELECT a.id, a.daily_sub_plan_id, a.absence_id,
+        `SELECT a.id, a.daily_sub_plan_id, a.absence_id, a.shared_responsibility_key,
+                a.counts_toward_workload,
                 a.source_schedule_entry_id, a.source_special_schedule_entry_id,
                 a.start_time, a.end_time,
                 a.responsibility_type, a.description, a.room_id, r.name AS room_name,
@@ -2006,7 +2226,8 @@ export class PlanningRepository {
   private async assignmentById(id: string): Promise<AssignmentRow> {
     const result = await this.db
       .prepare(
-        `SELECT a.id, a.daily_sub_plan_id, a.absence_id,
+        `SELECT a.id, a.daily_sub_plan_id, a.absence_id, a.shared_responsibility_key,
+                a.counts_toward_workload,
                 a.source_schedule_entry_id, a.source_special_schedule_entry_id,
                 a.start_time, a.end_time,
                 a.responsibility_type, a.description, a.room_id, r.name AS room_name,
@@ -2190,8 +2411,21 @@ function resolutionSource(
   schedule: readonly EntryRow[],
   dayType: DayType,
 ):
-  'School Sub' | 'PLAN' | 'Admin' | 'Available' | 'Manual' | 'Override' | null {
+  | 'School Sub'
+  | 'PLAN'
+  | 'Admin'
+  | 'Available'
+  | 'Manual'
+  | 'Override'
+  | 'Scheduled'
+  | null {
   if (!assignment.assigned_staff_id) return null;
+  if (
+    assignment.resolution_type === 'solo_coverage' &&
+    detailsRecord(assignment.resolution_details_json).soloKind === 'scheduled'
+  ) {
+    return 'Scheduled';
+  }
   if (assignment.resolution_type === 'manual_override') return 'Override';
   if (assignment.assigned_is_school_sub === 1) return 'School Sub';
   const applicableEntries = schedule.filter(
@@ -2219,6 +2453,84 @@ function responsibilityType(
   if (activityType === 'duty' || activityType === 'lunch') return 'duty';
   if (activityType === 'after_school') return 'after_school';
   return 'other';
+}
+
+function sharedResponsibilityKeyForEntry(
+  entry: Pick<
+    EntryRow,
+    | 'start_time'
+    | 'end_time'
+    | 'activity_type'
+    | 'category'
+    | 'description'
+    | 'room_id'
+    | 'day_type'
+  >,
+  plan: Pick<PlanRow, 'schedule_version_id' | 'special_schedule_id'>,
+): string | null {
+  if (!['duty', 'lunch', 'after_school', 'other'].includes(entry.activity_type))
+    return null;
+  return [
+    plan.special_schedule_id ? 'special' : 'normal',
+    plan.special_schedule_id ?? plan.schedule_version_id ?? '',
+    entry.day_type,
+    entry.start_time,
+    entry.end_time,
+    entry.activity_type,
+    entry.category,
+    entry.description.trim().toLocaleLowerCase('en-US'),
+    entry.room_id ?? '',
+  ].join('|');
+}
+
+function coverageConflicts(
+  staffId: string,
+  assignment: AssignmentRow,
+  assignments: readonly AssignmentRow[],
+  segments: readonly SegmentRow[],
+): string[] {
+  const conflicts: string[] = [];
+  for (const item of assignments) {
+    if (
+      item.id !== assignment.id &&
+      item.shared_responsibility_key !== assignment.shared_responsibility_key &&
+      item.status === 'assigned' &&
+      item.assigned_staff_id === staffId &&
+      item.start_time < assignment.end_time &&
+      assignment.start_time < item.end_time
+    ) {
+      conflicts.push(
+        `Overlapping sub coverage: ${item.description}, ${item.start_time}–${item.end_time}.`,
+      );
+    }
+  }
+  for (const segment of segments) {
+    const parent = assignments.find(
+      (item) => item.id === segment.assignment_id,
+    );
+    if (
+      segment.staff_id === staffId &&
+      parent?.shared_responsibility_key !==
+        assignment.shared_responsibility_key &&
+      segment.start_time < assignment.end_time &&
+      assignment.start_time < segment.end_time
+    ) {
+      conflicts.push(
+        `Overlapping split coverage: ${parent?.description ?? 'another Assignment'}, ${segment.start_time}–${segment.end_time}.`,
+      );
+    }
+  }
+  return conflicts;
+}
+
+function uniqueSoloCandidates(
+  candidates: readonly SoloCandidate[],
+): SoloCandidate[] {
+  return [
+    ...new Map(
+      candidates.map((candidate) => [candidate.id, candidate]),
+    ).values(),
+  ];
 }
 
 function defaultResolutionType(actionType: string): string | null {
@@ -2454,6 +2766,14 @@ function resolutionLabel(
     );
     return withNote(
       `Redistributed${recipients ? ` to ${recipients}` : ''}${room ? ` in ${room}` : ''}.`,
+    );
+  }
+  if (
+    assignment.resolutionType === 'solo_coverage' &&
+    assignment.assignedStaff
+  ) {
+    return withNote(
+      `${assignment.assignedStaff.displayName} solo${room ? ` in ${room}` : ''}.`,
     );
   }
   if (assignment.assignedStaff) {

@@ -93,6 +93,14 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
     if (!detail) return [];
     const query = search.trim().toLocaleLowerCase('en-US');
     return detail.assignments.filter((assignment) => {
+      const firstShared = assignment.sharedResponsibilityKey
+        ? detail.assignments.find(
+            (item) =>
+              item.sharedResponsibilityKey ===
+              assignment.sharedResponsibilityKey,
+          )
+        : assignment;
+      if (firstShared?.id !== assignment.id) return false;
       if (
         filter === 'classes' &&
         assignment.responsibilityType !== 'instruction'

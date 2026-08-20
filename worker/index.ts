@@ -151,6 +151,11 @@ const resolveSchema = z.discriminatedUnion('action', [
     assignAnyway: z.boolean().default(false),
   }),
   z.object({
+    action: z.literal('solo_coverage'),
+    staffId: z.string().min(1),
+    assignAnyway: z.boolean().default(false),
+  }),
+  z.object({
     action: z.literal('leave_uncovered'),
     acknowledged: z.boolean().default(false),
   }),
@@ -731,6 +736,13 @@ export default {
         let detail;
         if (body.action === 'assign') {
           detail = await planningRepository.assign(
+            assignmentId,
+            body.staffId,
+            body.assignAnyway,
+            context.actor.id,
+          );
+        } else if (body.action === 'solo_coverage') {
+          detail = await planningRepository.soloCoverage(
             assignmentId,
             body.staffId,
             body.assignAnyway,
