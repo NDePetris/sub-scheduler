@@ -204,7 +204,14 @@ const candidateIntervalSchema = z
     }
   });
 const teacherBulkActionSchema = z.object({ absentStaffId: z.string().min(1) });
-const messageEditSchema = z.object({ editedText: z.string().max(100_000) });
+const messageEditSchema = z
+  .object({
+    editedHtml: z.string().max(100_000).optional(),
+    editedText: z.string().max(100_000).optional(),
+  })
+  .refine((value) => Boolean(value.editedHtml ?? value.editedText), {
+    message: 'Message content is required.',
+  });
 const statusSchema = z.object({ status: z.enum(['draft', 'finalized']) });
 const staffRoleSchema = z.enum(STAFF_ROLES);
 const standardPeriodSchema = z.union([z.literal(40), z.literal(50), z.null()]);
@@ -848,7 +855,7 @@ export default {
           {
             detail: await planningRepository.editMessage(
               messageMatch[1],
-              body.editedText,
+              body.editedHtml ?? plainTextToHtml(body.editedText ?? ''),
             ),
           },
           requestId,
@@ -943,4 +950,18 @@ function isLocalTime(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function plainTextToHtml(value: string): string {
+  return value
+    .split(/\r?\n\r?\n/)
+    .map(
+      (paragraph) =>
+        `<p>${paragraph
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('\n', '<br>')}</p>`,
+    )
+    .join('');
 }

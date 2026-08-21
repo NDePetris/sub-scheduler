@@ -576,9 +576,7 @@ describe('persisted MVP workflow', () => {
     expect(
       data<{ detail: { message: { editedText: string } } }>(message.payload)
         .detail.message.editedText,
-    ).toContain(
-      'Riley Quinn in Room INT-301. Note: Students join after morning meeting.',
-    );
+    ).toContain('Riley Quinn - Elementary Mathematics in Room INT-301');
   });
 
   it('validates Redistribution recipients and requires acknowledgement for recipient conflicts', async () => {
@@ -797,7 +795,7 @@ describe('persisted MVP workflow', () => {
       data<{ detail: { message: { editedText: string } } }>(message.payload)
         .detail.message.editedText,
     ).toContain(
-      'Combined with Avery Bennett — Primary Literacy in Room PRI-101. Note: Join Avery.',
+      'Combined with Avery Bennett — Primary Literacy Note: Join Avery.',
     );
   });
 
@@ -1882,7 +1880,7 @@ describe('persisted MVP workflow', () => {
       data<{ detail: { message: { editedText: string } } }>(message.payload)
         .detail.message.editedText,
     ).toContain(
-      '08:00–08:20 Riley Quinn; 08:20–08:40 Casey Brooks; 08:40–08:50 Riley Quinn',
+      'Riley Quinn 08:00–08:20; Casey Brooks 08:20–08:40; Riley Quinn 08:40–08:50',
     );
 
     const rejectedConflict = await api(path, 'POST', {

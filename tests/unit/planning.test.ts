@@ -11,6 +11,7 @@ import {
   projectedPlanPeriodsLost,
   rankCandidates,
   renderSubPlanMessage,
+  renderRichSubPlanMessage,
   resolveStandardPeriodMinutes,
   validateSplitSegments,
 } from '../../src/domain/planning';
@@ -498,6 +499,64 @@ describe('MVP planning domain', () => {
           },
         ],
       }),
-    ).toContain('Primary Literacy (Avery Bennett) — Morgan Ellis');
+    ).toContain('Avery Bennett needs to be out today');
+  });
+
+  it('projects grouped rich message sections with solo, rooms, splits, and shared-duty deduplication', () => {
+    const rendered = renderRichSubPlanMessage({
+      absentTeachers: [
+        { id: 'avery', name: 'Avery Bennett' },
+        { id: 'blair', name: 'Blair Chen' },
+      ],
+      assignments: [
+        {
+          absentStaffId: 'avery',
+          absentTeacher: 'Avery Bennett',
+          startTime: '11:20',
+          endTime: '12:00',
+          description: 'MS Lunch',
+          room: '16',
+          sharedResponsibilityKey: 'lunch',
+          resolution: { kind: 'direct', staffName: 'Jane Smith', solo: true },
+        },
+        {
+          absentStaffId: 'blair',
+          absentTeacher: 'Blair Chen',
+          startTime: '11:20',
+          endTime: '12:00',
+          description: 'MS Lunch',
+          room: '16',
+          sharedResponsibilityKey: 'lunch',
+          resolution: { kind: 'direct', staffName: 'Jane Smith', solo: true },
+        },
+        {
+          absentStaffId: 'avery',
+          absentTeacher: 'Avery Bennett',
+          startTime: '09:00',
+          endTime: '09:50',
+          description: 'EL Math',
+          room: null,
+          resolution: {
+            kind: 'split',
+            segments: [
+              { staffName: 'Teacher B', startTime: '09:40', endTime: '09:50' },
+              { staffName: 'Teacher A', startTime: '09:00', endTime: '09:40' },
+            ],
+          },
+        },
+      ],
+    });
+    expect(rendered.html).toContain('<strong>Jane Smith solo</strong>');
+    expect(rendered.text).toContain('Jane Smith solo - MS Lunch in Room 16');
+    expect(rendered.text).toContain(
+      'Teacher A 09:00–09:40; Teacher B 09:40–09:50',
+    );
+    expect(rendered.text.match(/MS Lunch/g)).toHaveLength(1);
+    expect(rendered.text.indexOf('EL Math')).toBeLessThan(
+      rendered.text.indexOf('MS Lunch'),
+    );
+    expect(rendered.text.indexOf('Blair Chen needs')).toBeGreaterThan(
+      rendered.text.indexOf('Avery Bennett - you'),
+    );
   });
 });

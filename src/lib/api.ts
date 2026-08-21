@@ -190,6 +190,8 @@ export interface PlanDetail {
   readonly message: {
     readonly generatedText: string;
     readonly editedText: string;
+    readonly generatedHtml: string;
+    readonly editedHtml: string;
     readonly generatedAt: string;
   } | null;
 }
@@ -636,13 +638,13 @@ export async function regenerateMessage(date: string): Promise<PlanDetail> {
 
 export async function editMessage(
   date: string,
-  editedText: string,
+  editedHtml: string,
 ): Promise<PlanDetail> {
   const result = await apiRequest<{ detail: PlanDetail }>(
     `/api/plans/${date}/message`,
     {
       method: 'PATCH',
-      body: JSON.stringify({ editedText }),
+      body: JSON.stringify({ editedHtml }),
     },
   );
   return result.detail;

@@ -6,7 +6,7 @@ import {
   expectedDayType,
   projectedPlanPeriodsLost,
   rankCandidates,
-  renderSubPlanMessage,
+  renderRichSubPlanMessage,
   resolveStandardPeriodMinutes,
   shiftSchoolDate,
   validateSplitSegments,
@@ -153,6 +153,8 @@ interface MessageRow {
   generated_text: string;
   edited_text: string;
   generated_at: string;
+  generated_html: string | null;
+  edited_html: string | null;
 }
 
 interface WorkloadCoverageRow {
@@ -456,6 +458,10 @@ export class PlanningRepository {
         ? {
             generatedText: message.generated_text,
             editedText: message.edited_text,
+            generatedHtml:
+              message.generated_html ?? plainTextToHtml(message.generated_text),
+            editedHtml:
+              message.edited_html ?? plainTextToHtml(message.edited_text),
             generatedAt: message.generated_at,
           }
         : null,
@@ -1562,36 +1568,47 @@ export class PlanningRepository {
   async regenerateMessage(date: string, actorId: string) {
     const detail = await this.getPlan(date);
     await this.assertDraft(detail.plan.id);
-    const settings = await this.settings();
     const assignments = detail.assignments.map((assignment) => ({
       startTime: assignment.startTime,
       endTime: assignment.endTime,
       absentTeacher: assignment.absentStaff.displayName,
+      absentStaffId: assignment.absentStaff.id,
       description: assignment.description,
-      resolution: resolutionLabel(assignment),
+      sharedResponsibilityKey: assignment.sharedResponsibilityKey,
+      room: assignment.room,
+      resolution: messageResolution(assignment),
     }));
-    const text = renderSubPlanMessage({
-      template: settings.message_template,
-      schoolName: settings.school_name,
-      date,
-      dayType: detail.plan.dayType,
+    const rendered = renderRichSubPlanMessage({
       absentTeachers: [
-        ...new Set(detail.absences.map((absence) => absence.staffName)),
+        ...new Map(
+          detail.absences.map((absence) => [
+            absence.staffId,
+            { id: absence.staffId, name: absence.staffName },
+          ]),
+        ).values(),
       ],
       assignments,
     });
     await this.db
       .prepare(
         `INSERT INTO generated_messages
-           (id, daily_sub_plan_id, generated_text, edited_text, generated_by)
-         VALUES (?, ?, ?, ?, ?)`,
+           (id, daily_sub_plan_id, generated_text, edited_text, generated_html, edited_html, generated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .bind(crypto.randomUUID(), detail.plan.id, text, text, actorId)
+      .bind(
+        crypto.randomUUID(),
+        detail.plan.id,
+        rendered.text,
+        rendered.text,
+        rendered.html,
+        rendered.html,
+        actorId,
+      )
       .run();
     return this.getPlan(date);
   }
 
-  async editMessage(date: string, editedText: string) {
+  async editMessage(date: string, editedHtml: string) {
     const plan = await this.findPlan(date);
     if (!plan)
       throw new HttpError(
@@ -1608,8 +1625,14 @@ export class PlanningRepository {
         'Generate the message before editing it.',
       );
     await this.db
-      .prepare(`UPDATE generated_messages SET edited_text = ? WHERE id = ?`)
-      .bind(editedText, message.id)
+      .prepare(
+        `UPDATE generated_messages SET edited_text = ?, edited_html = ? WHERE id = ?`,
+      )
+      .bind(
+        htmlToPlainText(editedHtml),
+        sanitizeMessageHtml(editedHtml),
+        message.id,
+      )
       .run();
     return this.getPlan(date);
   }
@@ -2490,7 +2513,7 @@ export class PlanningRepository {
   private async latestMessage(planId: string): Promise<MessageRow | null> {
     return this.db
       .prepare(
-        `SELECT id, generated_text, edited_text, generated_at
+        `SELECT id, generated_text, edited_text, generated_at, generated_html, edited_html
            FROM generated_messages WHERE daily_sub_plan_id = ?
           ORDER BY generated_at DESC, id DESC LIMIT 1`,
       )
@@ -3027,6 +3050,90 @@ function resolutionLabel(
     );
   }
   return withNote(legacyResolutionLabel(assignment));
+}
+
+function messageResolution(
+  assignment: Parameters<typeof legacyResolutionLabel>[0],
+) {
+  const details = unknownRecord(assignment.resolutionDetails);
+  const note = stringDetail(details, 'note');
+  const suffix = note ? ` Note: ${note}` : '';
+  if (assignment.status === 'intentionally_uncovered')
+    return {
+      kind: 'structured' as const,
+      text: `Intentionally Uncovered${suffix}`,
+    };
+  if (assignment.segments.length > 0)
+    return { kind: 'split' as const, segments: assignment.segments };
+  if (assignment.assignedStaff)
+    return {
+      kind: 'direct' as const,
+      staffName: assignment.assignedStaff.displayName,
+      solo: assignment.resolutionType === 'solo_coverage',
+    };
+  if (assignment.resolutionType === 'combine_class') {
+    const target = [
+      stringDetail(details, 'receivingStaffName'),
+      stringDetail(details, 'receivingDescription'),
+    ]
+      .filter(Boolean)
+      .join(' — ');
+    return {
+      kind: 'structured' as const,
+      text: `Combined${target ? ` with ${target}` : ' Class'}${suffix}`,
+    };
+  }
+  if (assignment.resolutionType === 'redistribution') {
+    const recipients = formatNameList(
+      stringArrayDetail(details, 'receivingStaffNames'),
+    );
+    return {
+      kind: 'structured' as const,
+      text: `Redistributed${recipients ? ` to ${recipients}` : ''}${suffix}`,
+    };
+  }
+  return { kind: 'unresolved' as const, text: resolutionLabel(assignment) };
+}
+
+/** Strict allow-list; editor markup is persisted but never trusted as arbitrary HTML. */
+function sanitizeMessageHtml(value: string): string {
+  const withoutDangerous = value
+    .replace(/<(script|style|iframe|object|embed)[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<\/?(?:script|style|iframe|object|embed)[^>]*>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s(?:href|src)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  return withoutDangerous.replace(
+    /<\/?([a-z0-9]+)(?:\s[^>]*)?>/gi,
+    (tag, name: string) =>
+      ['p', 'br', 'ul', 'li', 'strong', 'b'].includes(name.toLowerCase())
+        ? `<${tag.startsWith('</') ? '/' : ''}${name.toLowerCase()}>`
+        : '',
+  );
+}
+
+function htmlToPlainText(value: string): string {
+  return sanitizeMessageHtml(value)
+    .replace(/<li>/gi, '- ')
+    .replace(/<\/p>|<\/li>|<br>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function plainTextToHtml(value: string): string {
+  return value
+    .split(/\r?\n\r?\n/)
+    .map(
+      (paragraph) =>
+        `<p>${paragraph.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('\n', '<br>')}</p>`,
+    )
+    .join('');
 }
 
 function unknownRecord(value: unknown): Record<string, unknown> {

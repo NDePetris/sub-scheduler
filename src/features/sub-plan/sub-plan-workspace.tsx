@@ -9,7 +9,7 @@ import {
   Search,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { normalizeToSchoolDay, shiftSchoolDay } from '@/domain/calendar';
 import { isTeacherRole } from '@/domain/staff';
@@ -797,7 +797,8 @@ function ReviewDialog({
   readonly onClose: () => void;
   readonly onChange: (value: PlanDetail) => void;
 }) {
-  const [text, setText] = useState(detail.message?.editedText ?? '');
+  const [html, setHtml] = useState(detail.message?.editedHtml ?? '');
+  const editorRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -807,11 +808,38 @@ function ReviewDialog({
     try {
       const next = await operation();
       onChange(next);
-      setText(next.message?.editedText ?? '');
+      setHtml(next.message?.editedHtml ?? '');
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
       setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (editorRef.current && editorRef.current.innerHTML !== html)
+      editorRef.current.innerHTML = html;
+  }, [html]);
+
+  const manuallyEdited = Boolean(
+    detail.message && html !== detail.message.generatedHtml,
+  );
+
+  async function copyMessage() {
+    const text = htmlToClipboardText(html);
+    try {
+      if (typeof ClipboardItem !== 'undefined') {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': new Blob([html], { type: 'text/html' }),
+            'text/plain': new Blob([text], { type: 'text/plain' }),
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
+    } catch {
+      await navigator.clipboard.writeText(text);
     }
   }
 
@@ -828,33 +856,62 @@ function ReviewDialog({
               size="sm"
               variant="secondary"
               disabled={busy}
-              onClick={() =>
-                void run(() => regenerateMessage(detail.plan.date))
-              }
+              onClick={() => {
+                if (
+                  manuallyEdited &&
+                  !window.confirm(
+                    'Regenerate message? Manual edits will be replaced.',
+                  )
+                )
+                  return;
+                void run(() => regenerateMessage(detail.plan.date));
+              }}
             >
               <RefreshCw className="size-3.5" /> Regenerate
             </Button>
             <Button
               size="sm"
               variant="secondary"
-              disabled={!text}
-              onClick={() => void navigator.clipboard.writeText(text)}
+              disabled={!html}
+              onClick={() => void copyMessage()}
             >
               <Clipboard className="size-3.5" /> Copy to Clipboard
             </Button>
           </div>
         </div>
-        <textarea
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          className="border-border min-h-80 w-full resize-y rounded-md border p-3 font-mono text-sm"
-          placeholder="Regenerate to build the current Sub Plan message."
+        <div className="flex gap-2" aria-label="Message formatting">
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            onClick={() => document.execCommand('bold')}
+          >
+            Bold
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            onClick={() => document.execCommand('insertUnorderedList')}
+          >
+            Bullets
+          </Button>
+        </div>
+        <div
+          ref={editorRef}
+          contentEditable={!busy && detail.plan.status === 'draft'}
+          suppressContentEditableWarning
+          role="textbox"
+          aria-multiline="true"
+          onInput={(event) => setHtml(event.currentTarget.innerHTML)}
+          className="border-border min-h-80 w-full rounded-md border p-3 text-sm [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-6"
+          data-placeholder="Regenerate to build the current Sub Plan message."
         />
         <div className="flex items-center justify-between">
           <Button
             variant="secondary"
             disabled={!detail.message || busy}
-            onClick={() => void run(() => editMessage(detail.plan.date, text))}
+            onClick={() => void run(() => editMessage(detail.plan.date, html))}
           >
             Save Message Edit
           </Button>
@@ -1328,4 +1385,12 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error
     ? cause.message
     : 'The request could not be completed.';
+}
+
+function htmlToClipboardText(html: string): string {
+  const documentFragment = new DOMParser().parseFromString(html, 'text/html');
+  for (const item of documentFragment.querySelectorAll('li')) {
+    item.insertAdjacentText('afterbegin', '- ');
+  }
+  return documentFragment.body.innerText.trim();
 }

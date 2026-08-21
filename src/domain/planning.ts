@@ -374,8 +374,95 @@ export interface MessageAssignment {
   readonly startTime: string;
   readonly endTime: string;
   readonly absentTeacher: string;
+  readonly absentStaffId?: string;
   readonly description: string;
-  readonly resolution: string;
+  readonly resolution: MessageResolution | string;
+  readonly room?: string | null;
+  readonly sharedResponsibilityKey?: string | null;
+}
+
+export type MessageResolution =
+  | {
+      readonly kind: 'direct';
+      readonly staffName: string;
+      readonly solo?: boolean;
+    }
+  | {
+      readonly kind: 'split';
+      readonly segments: readonly {
+        readonly startTime: string;
+        readonly endTime: string;
+        readonly staffName: string;
+      }[];
+    }
+  | { readonly kind: 'structured'; readonly text: string }
+  | { readonly kind: 'unresolved'; readonly text: string };
+
+export interface RenderedSubPlanMessage {
+  readonly html: string;
+  readonly text: string;
+}
+
+/** A deterministic, teacher-grouped projection of the structured Daily Sub Plan. */
+export function renderRichSubPlanMessage(input: {
+  readonly absentTeachers: readonly {
+    readonly id: string;
+    readonly name: string;
+  }[];
+  readonly assignments: readonly MessageAssignment[];
+}): RenderedSubPlanMessage {
+  const teachers = new Map<string, { id: string; name: string }>();
+  for (const teacher of input.absentTeachers) teachers.set(teacher.id, teacher);
+  for (const assignment of input.assignments) {
+    const id = assignment.absentStaffId ?? assignment.absentTeacher;
+    if (!teachers.has(id))
+      teachers.set(id, { id, name: assignment.absentTeacher });
+  }
+  const seenShared = new Set<string>();
+  const sections = [...teachers.values()].map((teacher) => {
+    const lines = input.assignments
+      .filter(
+        (item) => (item.absentStaffId ?? item.absentTeacher) === teacher.id,
+      )
+      .filter((item) => {
+        if (!item.sharedResponsibilityKey) return true;
+        const key = item.sharedResponsibilityKey;
+        if (seenShared.has(key)) return false;
+        seenShared.add(key);
+        return true;
+      })
+      .sort(
+        (left, right) =>
+          left.startTime.localeCompare(right.startTime) ||
+          left.endTime.localeCompare(right.endTime),
+      )
+      .map(renderMessageLine);
+    return { teacher, lines };
+  });
+  const html = [
+    '<p>Hi all,</p>',
+    ...sections.flatMap(({ teacher, lines }) => [
+      `<p>${escapeHtml(teacher.name)} needs to be out today, and I'd like to use the following for their coverage:</p>`,
+      lines.length
+        ? `<ul>${lines.map((line) => `<li>${line.html}</li>`).join('')}</ul>`
+        : '<p>No Needs Sub Assignments.</p>',
+      `<p>${escapeHtml(teacher.name)} - you can reply all here to share plans.</p>`,
+    ]),
+  ].join('');
+  const text = [
+    'Hi all,',
+    ...sections.flatMap(({ teacher, lines }) => [
+      '',
+      `${teacher.name} needs to be out today, and I'd like to use the following for their coverage:`,
+      '',
+      ...(lines.length
+        ? lines.map((line) => `- ${line.text}`)
+        : ['No Needs Sub Assignments.']),
+      '',
+      `${teacher.name} - you can reply all here to share plans.`,
+    ]),
+  ].join('\n');
+  return { html, text };
 }
 
 export function renderSubPlanMessage(input: {
@@ -386,26 +473,66 @@ export function renderSubPlanMessage(input: {
   readonly absentTeachers: readonly string[];
   readonly assignments: readonly MessageAssignment[];
 }): string {
-  const assignmentText = input.assignments.length
-    ? input.assignments
-        .map(
-          (assignment) =>
-            `• ${assignment.startTime}–${assignment.endTime}: ${assignment.description} (${assignment.absentTeacher}) — ${assignment.resolution}`,
-        )
-        .join('\n')
-    : 'No Needs Sub Assignments.';
-  const absentText = input.absentTeachers.length
-    ? input.absentTeachers.join(', ')
-    : 'None';
-  return input.template
-    .replaceAll('{{school_name}}', input.schoolName)
-    .replaceAll('{{date}}', input.date)
-    .replaceAll('{{day_type}}', input.dayType)
-    .replaceAll('{{absent_teachers}}', absentText)
-    .replaceAll(
-      '{{assignments}}',
-      `Absent: ${absentText}\n\n${assignmentText}`,
-    );
+  return renderRichSubPlanMessage({
+    absentTeachers: input.absentTeachers.map((name) => ({ id: name, name })),
+    assignments: input.assignments.map((assignment) => ({
+      ...assignment,
+      resolution:
+        typeof assignment.resolution === 'string'
+          ? { kind: 'structured' as const, text: assignment.resolution }
+          : assignment.resolution,
+    })),
+  }).text;
+}
+
+function renderMessageLine(assignment: MessageAssignment): {
+  html: string;
+  text: string;
+} {
+  const prefix = `${assignment.startTime}–${assignment.endTime} `;
+  const room = assignment.room?.trim()
+    ? ` in ${formatMessageRoom(assignment.room)}`
+    : '';
+  const resolution: MessageResolution =
+    typeof assignment.resolution === 'string'
+      ? { kind: 'structured', text: assignment.resolution }
+      : assignment.resolution;
+  if (resolution.kind === 'direct') {
+    const name = `${resolution.staffName}${resolution.solo ? ' solo' : ''}`;
+    return {
+      html: `${escapeHtml(prefix)}<strong>${escapeHtml(name)}</strong> - ${escapeHtml(assignment.description + room)}`,
+      text: `${prefix}${name} - ${assignment.description}${room}`,
+    };
+  }
+  if (resolution.kind === 'split') {
+    const rendered = [...resolution.segments]
+      .sort((a, b) => a.startTime.localeCompare(b.startTime))
+      .map(
+        (segment) =>
+          `${segment.staffName} ${segment.startTime}–${segment.endTime}`,
+      )
+      .join('; ');
+    return {
+      html: `${escapeHtml(prefix + rendered)} - ${escapeHtml(assignment.description + room)}`,
+      text: `${prefix}${rendered} - ${assignment.description}${room}`,
+    };
+  }
+  return {
+    html: `${escapeHtml(prefix + resolution.text)} - ${escapeHtml(assignment.description + room)}`,
+    text: `${prefix}${resolution.text} - ${assignment.description}${room}`,
+  };
+}
+
+function formatMessageRoom(room: string): string {
+  return /^room\b/i.test(room) ? room : `Room ${room}`;
+}
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function interval(start: string, end: string): TimeInterval {
