@@ -960,6 +960,205 @@ export class PlanningRepository {
     );
   }
 
+  async coverTeacherWithSchoolSub(
+    planId: string,
+    absentStaffId: string,
+    actorId: string,
+  ) {
+    await this.assertDraft(planId);
+    const plan = await this.planById(planId);
+    const schoolSubs = await this.db
+      .prepare(
+        `SELECT id, display_name, role, is_school_sub, standard_period_minutes FROM staff
+          WHERE is_active = 1 AND can_sub = 1 AND is_school_sub = 1
+          ORDER BY display_name, id`,
+      )
+      .all<StaffRow>();
+    if (schoolSubs.results.length !== 1) {
+      throw new HttpError(
+        409,
+        schoolSubs.results.length === 0
+          ? 'school_sub_not_configured'
+          : 'multiple_school_subs_configured',
+        schoolSubs.results.length === 0
+          ? 'Configure one active School Sub before using this action.'
+          : 'Configure exactly one active School Sub before using this action.',
+      );
+    }
+    const schoolSub = schoolSubs.results[0]!;
+    const [entries, absences, allAssignments] = await Promise.all([
+      this.entriesForPlan(plan),
+      this.absencesForDate(plan.date),
+      this.assignmentsForPlan(plan.id),
+    ]);
+    const segments = await this.segmentsForAssignments(
+      allAssignments.map((assignment) => assignment.id),
+    );
+    const targets = allAssignments.filter(
+      (assignment) => assignment.absent_staff_id === absentStaffId,
+    );
+    if (targets.length === 0) {
+      throw new HttpError(
+        404,
+        'teacher_assignments_not_found',
+        'No Assignments exist for this absent teacher on this Sub Plan.',
+      );
+    }
+    const result = emptyBulkResult();
+    const statements: D1PreparedStatement[] = [];
+    const workingAssignments = [...allAssignments];
+    const now = new Date().toISOString();
+    for (const assignment of targets) {
+      if (!isSchoolSubBulkEligible(assignment)) {
+        result.skipped += 1;
+        continue;
+      }
+      if (
+        assignment.assigned_staff_id === schoolSub.id &&
+        assignment.status === 'assigned'
+      ) {
+        result.alreadyAssigned += 1;
+        continue;
+      }
+      const check = evaluateCandidate(
+        plan,
+        schoolSub,
+        assignment.start_time,
+        assignment.end_time,
+        assignment.id,
+        { entries, absences, assignments: workingAssignments, segments },
+      );
+      if (check.conflicts.length > 0) {
+        result.conflicted += 1;
+        continue;
+      }
+      statements.push(
+        this.db
+          .prepare('DELETE FROM assignment_segments WHERE assignment_id = ?')
+          .bind(assignment.id),
+        this.db
+          .prepare(
+            `UPDATE assignments SET assigned_staff_id = ?, resolution_type = ?, resolution_details_json = ?,
+             status = 'assigned', is_default = 0, conflict_explanation = NULL,
+             override_acknowledged_at = NULL, override_acknowledged_by = NULL,
+             updated_by = ?, updated_at = ? WHERE id = ?`,
+          )
+          .bind(
+            schoolSub.id,
+            assignment.responsibility_type === 'duty'
+              ? 'duty_coverage'
+              : 'teacher_cover',
+            noteOnlyDetailsJson(assignment.resolution_details_json),
+            actorId,
+            now,
+            assignment.id,
+          ),
+      );
+      const index = workingAssignments.findIndex(
+        (item) => item.id === assignment.id,
+      );
+      workingAssignments[index] = {
+        ...assignment,
+        assigned_staff_id: schoolSub.id,
+        status: 'assigned',
+        resolution_type:
+          assignment.responsibility_type === 'duty'
+            ? 'duty_coverage'
+            : 'teacher_cover',
+      };
+      result.changed += 1;
+    }
+    if (statements.length) await this.db.batch(statements);
+    return { detail: await this.getPlan(plan.date), result };
+  }
+
+  async restoreTeacherDefaults(
+    planId: string,
+    absentStaffId: string,
+    actorId: string,
+  ) {
+    await this.assertDraft(planId);
+    const plan = await this.planById(planId);
+    const [allAssignments, actions] = await Promise.all([
+      this.assignmentsForPlan(plan.id),
+      this.defaultActions(absentStaffId, plan.day_type),
+    ]);
+    const targets = allAssignments.filter(
+      (assignment) => assignment.absent_staff_id === absentStaffId,
+    );
+    if (targets.length === 0) {
+      throw new HttpError(
+        404,
+        'teacher_assignments_not_found',
+        'No Assignments exist for this absent teacher on this Sub Plan.',
+      );
+    }
+    const result = emptyBulkResult();
+    const statements: D1PreparedStatement[] = [];
+    const now = new Date().toISOString();
+    for (const assignment of targets) {
+      // Solo state belongs to the shared operational duty, so this pass leaves it intact.
+      if (assignment.shared_responsibility_key) {
+        result.skipped += 1;
+        continue;
+      }
+      const action = actions.find(
+        (item) =>
+          item.start_time < assignment.end_time &&
+          assignment.start_time < item.end_time,
+      );
+      const resolution = action
+        ? await this.evaluateDefault(
+            action,
+            plan,
+            assignment.start_time,
+            assignment.end_time,
+            {
+              staffId: absentStaffId,
+              startDate: plan.date,
+              endDate: plan.date,
+              startTime: null,
+              endTime: null,
+            },
+            assignment.id,
+          )
+        : null;
+      if (!action) result.noDefault += 1;
+      else if (resolution?.status === 'unresolved') result.conflicted += 1;
+      else result.changed += 1;
+      statements.push(
+        this.db
+          .prepare('DELETE FROM assignment_segments WHERE assignment_id = ?')
+          .bind(assignment.id),
+        this.db
+          .prepare(
+            `UPDATE assignments SET default_action_id = ?, assigned_staff_id = ?, resolution_type = ?,
+             resolution_details_json = ?, room_id = ?, status = ?, is_default = ?, conflict_explanation = ?,
+             counts_toward_workload = 1, override_acknowledged_at = NULL, override_acknowledged_by = NULL,
+             updated_by = ?, updated_at = ? WHERE id = ?`,
+          )
+          .bind(
+            action?.id ?? null,
+            resolution?.assignedStaffId ?? null,
+            resolution?.resolutionType ?? null,
+            defaultDetailsWithNote(
+              resolution?.detailsJson ?? null,
+              assignment.resolution_details_json,
+            ),
+            action?.room_id ?? assignment.room_id,
+            resolution?.status ?? 'unresolved',
+            resolution?.isDefault ? 1 : 0,
+            resolution?.conflict ?? null,
+            actorId,
+            now,
+            assignment.id,
+          ),
+      );
+    }
+    if (statements.length) await this.db.batch(statements);
+    return { detail: await this.getPlan(plan.date), result };
+  }
+
   async leaveUncovered(
     assignmentId: string,
     acknowledged: boolean,
@@ -1504,6 +1703,7 @@ export class PlanningRepository {
       startTime: string | null;
       endTime: string | null;
     },
+    excludeAssignmentId: string | null = null,
   ) {
     if (action.action_type === 'move_room') {
       return {
@@ -1567,7 +1767,7 @@ export class PlanningRepository {
       person,
       startTime,
       endTime,
-      null,
+      excludeAssignmentId,
     );
     if (check.conflicts.length > 0 || check.sourceType === 'manual') {
       const reason =
@@ -2544,6 +2744,40 @@ function defaultResolutionType(actionType: string): string | null {
   return values[actionType] ?? null;
 }
 
+interface BulkOperationResult {
+  changed: number;
+  alreadyAssigned: number;
+  skipped: number;
+  conflicted: number;
+  noDefault: number;
+}
+
+function emptyBulkResult(): BulkOperationResult {
+  return {
+    changed: 0,
+    alreadyAssigned: 0,
+    skipped: 0,
+    conflicted: 0,
+    noDefault: 0,
+  };
+}
+
+function isSchoolSubBulkEligible(assignment: AssignmentRow): boolean {
+  if (assignment.shared_responsibility_key) return false;
+  if (
+    assignment.responsibility_type !== 'instruction' &&
+    assignment.responsibility_type !== 'duty'
+  )
+    return false;
+  return ![
+    'combine_class',
+    'redistribution',
+    'intentional_uncovered',
+    'solo_coverage',
+    'split_coverage',
+  ].includes(assignment.resolution_type ?? '');
+}
+
 function unresolvedDefault(conflict: string) {
   return {
     assignedStaffId: null,
@@ -2686,6 +2920,17 @@ function noteOnlyDetailsJson(value: string | null): string | null {
   return typeof note === 'string' && note.trim()
     ? JSON.stringify({ note: note.trim() })
     : null;
+}
+
+function defaultDetailsWithNote(
+  defaultDetailsJson: string | null,
+  previousDetailsJson: string | null,
+): string | null {
+  const note = detailsRecord(previousDetailsJson).note;
+  const details = detailsRecord(defaultDetailsJson);
+  if (typeof note === 'string' && note.trim()) details.note = note.trim();
+  const compacted = compactDetails(details);
+  return Object.keys(compacted).length ? JSON.stringify(compacted) : null;
 }
 
 function periodEntryDto(entry: WorkloadPlanEntryRow) {

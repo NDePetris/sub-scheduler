@@ -206,6 +206,86 @@ describe('persisted MVP workflow', () => {
     );
   });
 
+  it('applies teacher-scoped School Sub coverage and reevaluates current defaults atomically', async () => {
+    const date = '2026-10-06';
+    await api('/api/plans/ensure', 'POST', { date, dayType: 'B' });
+    for (const staffId of ['staff_avery_bennett', 'staff_theo_wallace']) {
+      await api('/api/absences', 'POST', {
+        staffId,
+        startDate: date,
+        endDate: date,
+        startTime: null,
+        endTime: null,
+      });
+    }
+    const initial = data<{
+      detail: {
+        plan: { id: string };
+        assignments: Array<{
+          id: string;
+          absentStaff: { id: string };
+          responsibilityType: string;
+          assignedStaff: { id: string } | null;
+        }>;
+      };
+    }>((await api(`/api/plans/${date}`)).payload).detail;
+    const avery = initial.assignments.find(
+      (assignment) =>
+        assignment.absentStaff.id === 'staff_avery_bennett' &&
+        assignment.responsibilityType === 'instruction',
+    );
+    expect(avery).toBeTruthy();
+    await api(`/api/assignments/${avery?.id}/resolve`, 'POST', {
+      action: 'assign',
+      staffId: 'staff_morgan_ellis',
+      assignAnyway: true,
+    });
+    const covered = await api(
+      `/api/daily-sub-plans/${initial.plan.id}/cover-with-school-sub`,
+      'POST',
+      { absentStaffId: 'staff_avery_bennett' },
+    );
+    expect(covered.response.status).toBe(200);
+    const coveredDetail = data<{
+      detail: {
+        assignments: Array<{
+          absentStaff: { id: string };
+          assignedStaff: { id: string } | null;
+        }>;
+      };
+      result: { changed: number };
+    }>(covered.payload);
+    expect(coveredDetail.result.changed).toBeGreaterThan(0);
+    expect(
+      coveredDetail.detail.assignments
+        .filter(
+          (assignment) => assignment.absentStaff.id === 'staff_avery_bennett',
+        )
+        .some(
+          (assignment) => assignment.assignedStaff?.id === 'staff_riley_quinn',
+        ),
+    ).toBe(true);
+    expect(
+      coveredDetail.detail.assignments
+        .filter(
+          (assignment) => assignment.absentStaff.id === 'staff_theo_wallace',
+        )
+        .some(
+          (assignment) => assignment.assignedStaff?.id === 'staff_riley_quinn',
+        ),
+    ).toBe(false);
+
+    const restored = await api(
+      `/api/daily-sub-plans/${initial.plan.id}/restore-defaults`,
+      'POST',
+      { absentStaffId: 'staff_avery_bennett' },
+    );
+    expect(restored.response.status).toBe(200);
+    expect(
+      data<{ result: { changed: number } }>(restored.payload).result.changed,
+    ).toBeGreaterThan(0);
+  });
+
   it('applies valid defaults, resolves non-class needs, generates a message, and preserves finalization on reopen', async () => {
     const date = '2026-09-08';
     expect(

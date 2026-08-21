@@ -548,6 +548,40 @@ export async function resolveAssignment(
   return result.detail;
 }
 
+export interface TeacherBulkResult {
+  readonly changed: number;
+  readonly alreadyAssigned: number;
+  readonly skipped: number;
+  readonly conflicted: number;
+  readonly noDefault: number;
+}
+
+export async function coverTeacherWithSchoolSub(
+  planId: string,
+  absentStaffId: string,
+): Promise<{
+  readonly detail: PlanDetail;
+  readonly result: TeacherBulkResult;
+}> {
+  return apiRequest(
+    `/api/daily-sub-plans/${encodeURIComponent(planId)}/cover-with-school-sub`,
+    { method: 'POST', body: JSON.stringify({ absentStaffId }) },
+  );
+}
+
+export async function restoreTeacherDefaults(
+  planId: string,
+  absentStaffId: string,
+): Promise<{
+  readonly detail: PlanDetail;
+  readonly result: TeacherBulkResult;
+}> {
+  return apiRequest(
+    `/api/daily-sub-plans/${encodeURIComponent(planId)}/restore-defaults`,
+    { method: 'POST', body: JSON.stringify({ absentStaffId }) },
+  );
+}
+
 export type AssignmentResolutionInput =
   | {
       readonly action: 'assign';

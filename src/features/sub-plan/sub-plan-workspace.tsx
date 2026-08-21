@@ -25,15 +25,18 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   addAbsence,
+  coverTeacherWithSchoolSub,
   editMessage,
   ensurePlan,
   listStaff,
   regenerateMessage,
+  restoreTeacherDefaults,
   setPlanStatus,
   type BootstrapData,
   type PlanAssignment,
   type PlanDetail,
   type StaffData,
+  type TeacherBulkResult,
 } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
@@ -62,6 +65,8 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
   const [filter, setFilter] = useState<NeedFilter>('all');
   const [staffFilter, setStaffFilter] = useState('');
   const [search, setSearch] = useState('');
+  const [bulkFeedback, setBulkFeedback] = useState<string | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
 
   const load = useCallback(async (targetDate: string, dayType?: 'A' | 'B') => {
     setLoading(true);
@@ -133,6 +138,53 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
   function moveDate(days: number) {
     setSelectedAssignmentId(null);
     setDate(shiftSchoolDay(date, days));
+  }
+
+  async function runTeacherBulkAction(
+    action: 'school-sub' | 'restore-defaults',
+  ) {
+    if (!detail || !staffFilter || bulkPending) return;
+    const teacher = detail.absences.find(
+      (absence) => absence.staffId === staffFilter,
+    );
+    if (!teacher) return;
+    const label =
+      action === 'school-sub'
+        ? `Cover ${teacher.staffName}'s eligible assignments with the School Sub? Existing direct assignments may be replaced.`
+        : `Restore ${teacher.staffName}'s assignments to the current Default Sub Plan? Manual assignment changes will be replaced.`;
+    const teacherAssignments = detail.assignments.filter(
+      (assignment) => assignment.absentStaff.id === staffFilter,
+    );
+    const requiresConfirmation =
+      action === 'school-sub'
+        ? teacherAssignments.some(
+            (assignment) =>
+              assignment.assignedStaff &&
+              !staff.find(
+                (person) => person.id === assignment.assignedStaff?.id,
+              )?.isSchoolSub &&
+              assignment.resolutionType !== 'solo_coverage' &&
+              assignment.resolutionType !== 'combine_class' &&
+              assignment.resolutionType !== 'redistribution',
+          )
+        : teacherAssignments.some((assignment) => !assignment.isDefault);
+    if (requiresConfirmation && !window.confirm(label)) return;
+    setBulkPending(true);
+    setError(null);
+    setBulkFeedback(null);
+    try {
+      const response =
+        action === 'school-sub'
+          ? await coverTeacherWithSchoolSub(detail.plan.id, staffFilter)
+          : await restoreTeacherDefaults(detail.plan.id, staffFilter);
+      setDetail(response.detail);
+      setBulkFeedback(bulkResultMessage(action, response.result));
+      setSelectedAssignmentId(null);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBulkPending(false);
+    }
   }
 
   return (
@@ -256,6 +308,14 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
           </div>
         )}
       {error && <ErrorBanner message={error} />}
+      {bulkFeedback && (
+        <div
+          className="border-brand/30 bg-brand-soft text-brand-dark rounded-md border px-3 py-2 text-sm"
+          role="status"
+        >
+          {bulkFeedback}
+        </div>
+      )}
       {detail?.absences
         .filter((absence) => absence.informationalWarning)
         .map((absence) => (
@@ -350,6 +410,28 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
                       </option>
                     ))}
                   </select>
+                  {staffFilter && detail.plan.status === 'draft' && (
+                    <>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={bulkPending}
+                        onClick={() => void runTeacherBulkAction('school-sub')}
+                      >
+                        Cover with School Sub
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={bulkPending}
+                        onClick={() =>
+                          void runTeacherBulkAction('restore-defaults')
+                        }
+                      >
+                        Restore Defaults
+                      </Button>
+                    </>
+                  )}
                   <label className="border-border ml-auto flex h-8 items-center gap-2 rounded-md border bg-white px-2">
                     <Search className="text-muted-foreground size-3.5" />
                     <span className="sr-only">Search Assignments</span>
@@ -1208,6 +1290,34 @@ function schoolToday(timezone: string): string {
     parts.map((part) => [part.type, part.value]),
   );
   return `${values.year}-${values.month}-${values.day}`;
+}
+
+function bulkResultMessage(
+  action: 'school-sub' | 'restore-defaults',
+  result: TeacherBulkResult,
+): string {
+  const parts: string[] = [];
+  if (result.changed)
+    parts.push(
+      action === 'school-sub'
+        ? `${result.changed} assigned to School Sub`
+        : `${result.changed} defaults restored`,
+    );
+  if (result.alreadyAssigned)
+    parts.push(`${result.alreadyAssigned} already assigned`);
+  if (result.conflicted)
+    parts.push(
+      action === 'school-sub'
+        ? `${result.conflicted} left unchanged due to conflict`
+        : `${result.conflicted} unresolved because current defaults are invalid`,
+    );
+  if (result.noDefault)
+    parts.push(`${result.noDefault} with no configured Default`);
+  if (result.skipped)
+    parts.push(`${result.skipped} protected shared or structured Need skipped`);
+  return parts.length
+    ? `${parts.join('; ')}.`
+    : 'No eligible Assignments changed.';
 }
 
 function minutes(value: string): number {

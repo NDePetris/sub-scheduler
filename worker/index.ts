@@ -203,6 +203,7 @@ const candidateIntervalSchema = z
       });
     }
   });
+const teacherBulkActionSchema = z.object({ absentStaffId: z.string().min(1) });
 const messageEditSchema = z.object({ editedText: z.string().max(100_000) });
 const statusSchema = z.object({ status: z.enum(['draft', 'finalized']) });
 const staffRoleSchema = z.enum(STAFF_ROLES);
@@ -788,6 +789,38 @@ export default {
           );
         }
         return jsonSuccess({ detail }, requestId);
+      }
+
+      const schoolSubBulkMatch =
+        /^\/api\/daily-sub-plans\/([^/]+)\/cover-with-school-sub$/.exec(
+          url.pathname,
+        );
+      if (schoolSubBulkMatch?.[1] && request.method === 'POST') {
+        const body = teacherBulkActionSchema.parse(await readJson(request));
+        return jsonSuccess(
+          await planningRepository.coverTeacherWithSchoolSub(
+            decodeURIComponent(schoolSubBulkMatch[1]),
+            body.absentStaffId,
+            context.actor.id,
+          ),
+          requestId,
+        );
+      }
+
+      const restoreDefaultsBulkMatch =
+        /^\/api\/daily-sub-plans\/([^/]+)\/restore-defaults$/.exec(
+          url.pathname,
+        );
+      if (restoreDefaultsBulkMatch?.[1] && request.method === 'POST') {
+        const body = teacherBulkActionSchema.parse(await readJson(request));
+        return jsonSuccess(
+          await planningRepository.restoreTeacherDefaults(
+            decodeURIComponent(restoreDefaultsBulkMatch[1]),
+            body.absentStaffId,
+            context.actor.id,
+          ),
+          requestId,
+        );
       }
 
       const regenerateMatch =
