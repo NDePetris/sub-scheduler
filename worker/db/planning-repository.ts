@@ -296,6 +296,13 @@ export class PlanningRepository {
     const segments = await this.segmentsForAssignments(
       assignments.map((assignment) => assignment.id),
     );
+    const sharedProjection = projectSharedDutyStaffing(
+      assignments,
+      segments,
+      schedule,
+      absences,
+      plan,
+    );
     const segmentMap = new Map<string, SegmentRow[]>();
     for (const segment of segments) {
       const list = segmentMap.get(segment.assignment_id) ?? [];
@@ -304,6 +311,7 @@ export class PlanningRepository {
     }
     const scheduleById = new Map(schedule.map((entry) => [entry.id, entry]));
     const assignmentDtos = assignments.map((assignment) => {
+      const projected = sharedProjection.get(assignment.id);
       const sourceEntryId = plan.special_schedule_id
         ? assignment.source_special_schedule_entry_id
         : assignment.source_schedule_entry_id;
@@ -328,16 +336,20 @@ export class PlanningRepository {
           id: assignment.absent_staff_id,
           displayName: assignment.absent_staff_name,
         },
-        assignedStaff: assignment.assigned_staff_id
-          ? {
-              id: assignment.assigned_staff_id,
-              displayName: assignment.assigned_staff_name ?? '',
-            }
-          : null,
+        assignedStaff:
+          projected?.staff ??
+          (assignment.assigned_staff_id
+            ? {
+                id: assignment.assigned_staff_id,
+                displayName: assignment.assigned_staff_name ?? '',
+              }
+            : null),
         resolutionSource: resolutionSource(assignment, schedule, plan.day_type),
-        resolutionType: assignment.resolution_type,
+        resolutionType: projected?.solo
+          ? 'solo_coverage'
+          : assignment.resolution_type,
         resolutionDetails: parseJson(assignment.resolution_details_json),
-        status: assignment.status,
+        status: projected?.resolved ? 'assigned' : assignment.status,
         isDefault: assignment.is_default === 1,
         conflictExplanation: assignment.conflict_explanation,
         defaultAction: assignment.default_action_id
@@ -1212,6 +1224,36 @@ export class PlanningRepository {
     );
   }
 
+  async markUncoveredDuties(planId: string, actorId: string) {
+    const plan = await this.planById(planId);
+    await this.assertDraft(planId);
+    const detail = await this.getPlan(plan.date);
+    const eligible = detail.assignments.filter(
+      (assignment) =>
+        assignment.status === 'unresolved' &&
+        assignment.responsibilityType !== 'instruction',
+    );
+    if (eligible.length === 0) return this.getPlan(plan.date);
+    const now = new Date().toISOString();
+    const statements: D1PreparedStatement[] = [];
+    for (const assignment of eligible) {
+      statements.push(
+        this.db
+          .prepare('DELETE FROM assignment_segments WHERE assignment_id = ?')
+          .bind(assignment.id),
+        this.db
+          .prepare(
+            `UPDATE assignments SET assigned_staff_id = NULL, resolution_type = 'intentional_uncovered',
+             status = 'intentionally_uncovered', is_default = 0, conflict_explanation = NULL,
+             updated_by = ?, updated_at = ? WHERE id = ?`,
+          )
+          .bind(actorId, now, assignment.id),
+      );
+    }
+    await this.db.batch(statements);
+    return this.getPlan(plan.date);
+  }
+
   async combineClass(
     assignmentId: string,
     receivingScheduleEntryId: string,
@@ -1651,14 +1693,8 @@ export class PlanningRepository {
       );
     const now = new Date().toISOString();
     if (status === 'finalized') {
-      const unresolved = await this.db
-        .prepare(
-          `SELECT COUNT(*) AS count FROM assignments
-            WHERE daily_sub_plan_id = ? AND status = 'unresolved'`,
-        )
-        .bind(plan.id)
-        .first<CountRow>();
-      if ((unresolved?.count ?? 0) > 0) {
+      const detail = await this.getPlan(date);
+      if (detail.summary.unresolved > 0) {
         throw new HttpError(
           409,
           'unresolved_assignments',
@@ -2706,6 +2742,84 @@ function sharedResponsibilityKeyForEntry(
   ].join('|');
 }
 
+/** Projects the operational staffing state without rewriting legacy Solo records. */
+function projectSharedDutyStaffing(
+  assignments: readonly AssignmentRow[],
+  segments: readonly SegmentRow[],
+  entries: readonly EntryRow[],
+  absences: readonly AbsenceRow[],
+  plan: PlanRow,
+): Map<
+  string,
+  {
+    resolved: boolean;
+    solo: boolean;
+    staff: { id: string; displayName: string } | null;
+  }
+> {
+  const result = new Map<
+    string,
+    {
+      resolved: boolean;
+      solo: boolean;
+      staff: { id: string; displayName: string } | null;
+    }
+  >();
+  const segmentsByAssignment = new Map<string, SegmentRow[]>();
+  for (const segment of segments) {
+    const list = segmentsByAssignment.get(segment.assignment_id) ?? [];
+    list.push(segment);
+    segmentsByAssignment.set(segment.assignment_id, list);
+  }
+  const groups = new Map<string, AssignmentRow[]>();
+  for (const assignment of assignments) {
+    if (!assignment.shared_responsibility_key) continue;
+    const list = groups.get(assignment.shared_responsibility_key) ?? [];
+    list.push(assignment);
+    groups.set(assignment.shared_responsibility_key, list);
+  }
+  for (const [key, siblings] of groups) {
+    const staffing = new Map<string, string>();
+    const interval = siblings[0];
+    if (!interval) continue;
+    for (const entry of entries) {
+      if (sharedResponsibilityKeyForEntry(entry, plan) !== key) continue;
+      const absent = absences.some(
+        (absence) =>
+          absence.staff_id === entry.staff_id &&
+          timeRangesOverlap(
+            absence.start_time,
+            absence.end_time,
+            interval.start_time,
+            interval.end_time,
+          ),
+      );
+      if (!absent) staffing.set(entry.staff_id, entry.staff_name);
+    }
+    for (const sibling of siblings) {
+      if (sibling.status === 'assigned' && sibling.assigned_staff_id)
+        staffing.set(
+          sibling.assigned_staff_id,
+          sibling.assigned_staff_name ?? '',
+        );
+      for (const segment of segmentsByAssignment.get(sibling.id) ?? [])
+        staffing.set(segment.staff_id, segment.staff_name);
+    }
+    const people = [...staffing].map(([id, displayName]) => ({
+      id,
+      displayName,
+    }));
+    for (const sibling of siblings) {
+      result.set(sibling.id, {
+        resolved: people.length > 0,
+        solo: people.length === 1,
+        staff: people.length === 1 ? (people[0] ?? null) : null,
+      });
+    }
+  }
+  return result;
+}
+
 function coverageConflicts(
   staffId: string,
   assignment: AssignmentRow,
@@ -2988,8 +3102,7 @@ function legacyResolutionLabel(assignment: {
   readonly room: string | null;
   readonly scheduledRoomId: string | null;
 }): string {
-  if (assignment.status === 'intentionally_uncovered')
-    return 'Intentionally Uncovered';
+  if (assignment.status === 'intentionally_uncovered') return 'Not Covered';
   if (assignment.segments.length > 0) {
     return assignment.segments
       .map(
@@ -3061,7 +3174,7 @@ function messageResolution(
   if (assignment.status === 'intentionally_uncovered')
     return {
       kind: 'structured' as const,
-      text: `Intentionally Uncovered${suffix}`,
+      text: `Not Covered${suffix}`,
     };
   if (assignment.segments.length > 0)
     return { kind: 'split' as const, segments: assignment.segments };

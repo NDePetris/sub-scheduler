@@ -830,6 +830,22 @@ export default {
         );
       }
 
+      const markDutiesMatch =
+        /^\/api\/daily-sub-plans\/([^/]+)\/mark-uncovered-duties$/.exec(
+          url.pathname,
+        );
+      if (markDutiesMatch?.[1] && request.method === 'POST') {
+        return jsonSuccess(
+          {
+            detail: await planningRepository.markUncoveredDuties(
+              decodeURIComponent(markDutiesMatch[1]),
+              context.actor.id,
+            ),
+          },
+          requestId,
+        );
+      }
+
       const regenerateMatch =
         /^\/api\/plans\/(\d{4}-\d{2}-\d{2})\/message\/regenerate$/.exec(
           url.pathname,

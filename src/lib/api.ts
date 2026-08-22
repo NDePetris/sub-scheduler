@@ -584,6 +584,14 @@ export async function restoreTeacherDefaults(
   );
 }
 
+export async function markUncoveredDuties(planId: string): Promise<PlanDetail> {
+  const result = await apiRequest<{ detail: PlanDetail }>(
+    `/api/daily-sub-plans/${encodeURIComponent(planId)}/mark-uncovered-duties`,
+    { method: 'POST', body: '{}' },
+  );
+  return result.detail;
+}
+
 export type AssignmentResolutionInput =
   | {
       readonly action: 'assign';

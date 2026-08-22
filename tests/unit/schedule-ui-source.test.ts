@@ -95,14 +95,15 @@ describe('Daily Sub Plan resolution presentation source', () => {
   });
 
   it('places confirmed bulk actions in the absent-teacher filter context', () => {
-    expect(workspace).toContain('Cover with School Sub');
+    expect(workspace).toContain('Use School Sub');
+    expect(workspace).toContain('Actions for');
     expect(workspace).toContain('Restore Defaults');
     expect(workspace).toContain("runTeacherBulkAction('school-sub')");
     expect(workspace).toContain("runTeacherBulkAction('restore-defaults')");
     expect(workspace).toContain('window.confirm(label)');
     expect(workspace).toContain('bulkResultMessage');
     expect(workspace).toMatch(
-      /staffFilter && detail\.plan\.status === 'draft'[\s\S]*?Cover with School Sub[\s\S]*?Restore Defaults/,
+      /staffFilter && detail\.plan\.status === 'draft'[\s\S]*?Actions for[\s\S]*?Use School Sub[\s\S]*?Restore Defaults/,
     );
   });
 });

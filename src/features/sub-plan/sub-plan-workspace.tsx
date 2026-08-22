@@ -29,6 +29,7 @@ import {
   editMessage,
   ensurePlan,
   listStaff,
+  markUncoveredDuties,
   regenerateMessage,
   restoreTeacherDefaults,
   setPlanStatus,
@@ -180,6 +181,44 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
       setDetail(response.detail);
       setBulkFeedback(bulkResultMessage(action, response.result));
       setSelectedAssignmentId(null);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBulkPending(false);
+    }
+  }
+
+  async function openReview() {
+    if (!detail || bulkPending) return;
+    const seenSharedDuties = new Set<string>();
+    const eligibleDuties = detail.assignments.filter((assignment) => {
+      if (
+        assignment.status !== 'unresolved' ||
+        assignment.responsibilityType === 'instruction'
+      )
+        return false;
+      if (!assignment.sharedResponsibilityKey) return true;
+      if (seenSharedDuties.has(assignment.sharedResponsibilityKey))
+        return false;
+      seenSharedDuties.add(assignment.sharedResponsibilityKey);
+      return true;
+    });
+    if (
+      eligibleDuties.length > 0 &&
+      !window.confirm(
+        `${eligibleDuties.length} ${eligibleDuties.length === 1 ? 'duty does' : 'duties do'} not have coverage assigned. Mark ${eligibleDuties.length === 1 ? 'it' : 'them'} Not Covered and continue?`,
+      )
+    )
+      return;
+    setBulkPending(true);
+    setError(null);
+    try {
+      let next = detail;
+      if (eligibleDuties.length > 0)
+        next = await markUncoveredDuties(detail.plan.id);
+      if (!next.message) next = await regenerateMessage(next.plan.date);
+      setDetail(next);
+      setShowReview(true);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -372,7 +411,11 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
                   Full Schedule
                 </Tab>
               </div>
-              <Button variant="secondary" onClick={() => setShowReview(true)}>
+              <Button
+                variant="secondary"
+                disabled={bulkPending}
+                onClick={() => void openReview()}
+              >
                 Review &amp; Finalize
               </Button>
             </div>
@@ -411,14 +454,22 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
                     ))}
                   </select>
                   {staffFilter && detail.plan.status === 'draft' && (
-                    <>
+                    <div className="border-border flex items-center gap-1.5 border-l pl-2">
+                      <span className="text-foreground text-xs font-semibold">
+                        Actions for{' '}
+                        {
+                          detail.absences.find(
+                            (absence) => absence.staffId === staffFilter,
+                          )?.staffName
+                        }
+                      </span>
                       <Button
                         variant="secondary"
                         size="sm"
                         disabled={bulkPending}
                         onClick={() => void runTeacherBulkAction('school-sub')}
                       >
-                        Cover with School Sub
+                        Use School Sub
                       </Button>
                       <Button
                         variant="secondary"
@@ -430,7 +481,7 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
                       >
                         Restore Defaults
                       </Button>
-                    </>
+                    </div>
                   )}
                   <label className="border-border ml-auto flex h-8 items-center gap-2 rounded-md border bg-white px-2">
                     <Search className="text-muted-foreground size-3.5" />
@@ -1225,8 +1276,7 @@ function StatusBadge({
         <Check className="size-3" /> Assigned
       </Badge>
     );
-  if (status === 'intentionally_uncovered')
-    return <Badge>Intentionally Uncovered</Badge>;
+  if (status === 'intentionally_uncovered') return <Badge>Not Covered</Badge>;
   return (
     <Badge className="border-danger/30 bg-danger-soft text-danger-dark">
       <AlertTriangle className="size-3" /> Unresolved
@@ -1264,8 +1314,7 @@ function legacyAssignmentLabel(assignment: PlanAssignment): string {
   if (assignment.assignedStaff) return assignment.assignedStaff.displayName;
   if (assignment.segments.length)
     return assignment.segments.map((segment) => segment.staffName).join(' / ');
-  if (assignment.status === 'intentionally_uncovered')
-    return 'Intentionally Uncovered';
+  if (assignment.status === 'intentionally_uncovered') return 'Not Covered';
   if (assignment.resolutionType)
     return assignment.resolutionType.replaceAll('_', ' ');
   return '—';

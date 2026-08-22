@@ -234,7 +234,7 @@ function absentOverlay(
       assignmentId: assignment.id,
       startTime: assignment.startTime,
       endTime: assignment.endTime,
-      label: 'Absent · Intentionally Uncovered',
+      label: 'Absent · Not Covered',
       tone: 'intentionally-uncovered',
     };
   }
@@ -296,8 +296,7 @@ export function assignmentResolutionLabel(
   if (assignment.assignedStaff) return assignment.assignedStaff.displayName;
   if (assignment.segments.length > 0)
     return assignment.segments.map((segment) => segment.staffName).join(' / ');
-  if (assignment.status === 'intentionally_uncovered')
-    return 'Intentionally Uncovered';
+  if (assignment.status === 'intentionally_uncovered') return 'Not Covered';
   const details = recordDetails(assignment.resolutionDetails);
   if (assignment.resolutionType === 'combine_class') {
     const target = [

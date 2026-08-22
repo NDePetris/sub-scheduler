@@ -12,7 +12,6 @@ import {
 import {
   ApiError,
   getCandidates,
-  getCandidatesWithSolo,
   listRooms,
   resolveAssignment,
   type AssignmentResolutionInput,
@@ -21,7 +20,6 @@ import {
   type PlanDetail,
   type RoomData,
   type StaffData,
-  type SoloCandidate,
 } from '@/lib/api';
 
 export function ResolveSubNeedDrawer({
@@ -38,7 +36,6 @@ export function ResolveSubNeedDrawer({
   readonly onChange: (detail: PlanDetail) => void;
 }) {
   const [candidates, setCandidates] = useState<CandidatePreview[]>([]);
-  const [soloCandidates, setSoloCandidates] = useState<SoloCandidate[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(true);
   const [candidateError, setCandidateError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -71,11 +68,8 @@ export function ResolveSubNeedDrawer({
 
   useEffect(() => {
     const controller = new AbortController();
-    void getCandidatesWithSolo(assignment.id, controller.signal)
-      .then((values) => {
-        setCandidates(values.candidates);
-        setSoloCandidates(values.soloCandidates);
-      })
+    void getCandidates(assignment.id, { signal: controller.signal })
+      .then(setCandidates)
       .catch((cause: unknown) => {
         if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
           setCandidateError(errorMessage(cause));
@@ -262,51 +256,6 @@ export function ResolveSubNeedDrawer({
 
           {assignment.status !== 'unresolved' && (
             <CurrentChoice assignment={assignment} />
-          )}
-
-          {soloCandidates.length > 0 && (
-            <section className="border-border bg-muted/40 rounded-lg border p-4">
-              <h3 className="text-base font-bold">
-                Handle this responsibility solo
-              </h3>
-              <p className="text-muted-foreground mt-0.5 text-xs">
-                {soloCandidates[0]?.kind === 'scheduled'
-                  ? 'Already scheduled co-assignees can handle this duty without consuming PLAN time.'
-                  : 'Assign one available person to handle the shared responsibility alone.'}
-              </p>
-              <div className="border-border divide-border mt-3 divide-y overflow-hidden rounded-md border">
-                {soloCandidates
-                  .filter((candidate) => candidate.conflicts.length === 0)
-                  .map((candidate) => (
-                    <div
-                      key={candidate.id}
-                      className="flex items-center justify-between gap-3 p-3 text-sm"
-                    >
-                      <span>
-                        <span className="font-semibold">
-                          {candidate.displayName}
-                        </span>
-                        {candidate.kind === 'scheduled'
-                          ? ' — already scheduled'
-                          : ' — newly assigned'}
-                      </span>
-                      <Button
-                        size="sm"
-                        disabled={busy}
-                        onClick={() =>
-                          void act({
-                            action: 'solo_coverage',
-                            staffId: candidate.id,
-                            assignAnyway: false,
-                          })
-                        }
-                      >
-                        Handles Solo
-                      </Button>
-                    </div>
-                  ))}
-              </div>
-            </section>
           )}
 
           <section aria-labelledby="assign-a-sub-title">
@@ -632,7 +581,7 @@ export function ResolveSubNeedDrawer({
                 </p>
                 <p className="mt-1 text-xs">
                   This Assignment is instructional. Confirming will record the
-                  administrator override as Intentionally Uncovered.
+                  administrator override as Not Covered.
                 </p>
                 <div className="mt-3 flex justify-end gap-2">
                   <Button
@@ -1521,8 +1470,7 @@ function currentAssignmentLabel(assignment: PlanAssignment): string {
           `${segment.staffName} ${segment.startTime}–${segment.endTime}`,
       )
       .join('; ');
-  if (assignment.status === 'intentionally_uncovered')
-    return 'Intentionally Uncovered';
+  if (assignment.status === 'intentionally_uncovered') return 'Not Covered';
   if (assignment.resolutionType)
     return assignment.resolutionType.replaceAll('_', ' ');
   return 'Unresolved';

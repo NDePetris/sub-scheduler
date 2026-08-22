@@ -49,6 +49,9 @@ describe('persisted MVP workflow', () => {
           id: string;
           description: string;
           sharedResponsibilityKey: string | null;
+          status: string;
+          resolutionType: string | null;
+          assignedStaff: { id: string } | null;
         }>;
       };
     }>((await api(`/api/plans/${scheduledDate}`)).payload).detail;
@@ -56,6 +59,11 @@ describe('persisted MVP workflow', () => {
       (item) => item.description === 'MS Lunch',
     );
     expect(scheduledAssignment?.sharedResponsibilityKey).toBeTruthy();
+    expect(scheduledAssignment).toMatchObject({
+      status: 'assigned',
+      resolutionType: 'solo_coverage',
+      assignedStaff: { id: 'staff_jordan_kim' },
+    });
     const scheduledCandidates = data<{
       soloCandidates: Array<{ id: string; kind: string }>;
     }>(
