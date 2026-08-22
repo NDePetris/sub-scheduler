@@ -11,6 +11,90 @@ export function formatRoomLabel(room: string | null): string | null {
   return value;
 }
 
+export type OperationalNeedSort = 'time' | 'teacher';
+
+export interface OperationalNeedInput {
+  readonly id: string;
+  readonly sharedResponsibilityKey: string | null;
+  readonly startTime: string;
+  readonly endTime: string;
+  readonly description: string;
+  readonly responsibilityType: string;
+  readonly status: 'unresolved' | 'assigned' | 'intentionally_uncovered';
+  readonly absentStaff: { readonly id: string; readonly displayName: string };
+  readonly assignedStaff: { readonly displayName: string } | null;
+}
+
+/** Filters whole shared-duty groups, then returns one stable operational row. */
+export function projectOperationalNeeds<T extends OperationalNeedInput>(
+  assignments: readonly T[],
+  options: {
+    readonly filter?: 'all' | 'classes' | 'duties' | 'unresolved';
+    readonly staffId?: string;
+    readonly search?: string;
+    readonly sort?: OperationalNeedSort;
+  } = {},
+): T[] {
+  const groups = new Map<string, T[]>();
+  for (const assignment of assignments) {
+    const key = assignment.sharedResponsibilityKey
+      ? `shared:${assignment.sharedResponsibilityKey}`
+      : `assignment:${assignment.id}`;
+    const group = groups.get(key) ?? [];
+    group.push(assignment);
+    groups.set(key, group);
+  }
+  const query = options.search?.trim().toLocaleLowerCase('en-US') ?? '';
+  const projected: T[] = [];
+  for (const group of groups.values()) {
+    const canonical = [...group].sort((left, right) =>
+      left.id.localeCompare(right.id),
+    )[0];
+    if (!canonical) continue;
+    if (
+      options.filter === 'classes' &&
+      canonical.responsibilityType !== 'instruction'
+    )
+      continue;
+    if (
+      options.filter === 'duties' &&
+      canonical.responsibilityType === 'instruction'
+    )
+      continue;
+    if (options.filter === 'unresolved' && canonical.status !== 'unresolved')
+      continue;
+    if (
+      options.staffId &&
+      !group.some((item) => item.absentStaff.id === options.staffId)
+    )
+      continue;
+    if (
+      query &&
+      !group.some((item) =>
+        `${item.description} ${item.absentStaff.displayName} ${item.assignedStaff?.displayName ?? ''}`
+          .toLocaleLowerCase('en-US')
+          .includes(query),
+      )
+    )
+      continue;
+    projected.push(canonical);
+  }
+  const teacherFirst = options.sort === 'teacher';
+  return projected.sort((left, right) => {
+    const teacher = left.absentStaff.displayName.localeCompare(
+      right.absentStaff.displayName,
+    );
+    const time =
+      left.startTime.localeCompare(right.startTime) ||
+      left.endTime.localeCompare(right.endTime);
+    return (
+      (teacherFirst ? teacher || time : time || teacher) ||
+      left.description.localeCompare(right.description) ||
+      left.id.localeCompare(right.id)
+    );
+  });
+}
+
 export interface TimelineStaff {
   readonly id: string;
   readonly displayName: string;

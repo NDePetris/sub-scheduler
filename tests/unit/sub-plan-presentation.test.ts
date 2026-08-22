@@ -5,6 +5,7 @@ import {
   assignmentResolutionLabel,
   buildFullScheduleTimeline,
   formatRoomLabel,
+  projectOperationalNeeds,
   type FullScheduleTimelineInput,
   type TimelineAssignmentInput,
   type TimelineScheduleEntry,
@@ -56,7 +57,78 @@ describe('Sub Plan presentation helpers', () => {
       'Redistributed to Jane Jones + Mark Lee',
     );
   });
+
+  it('filters shared duties by every absent sibling and keeps a stable canonical row', () => {
+    const needs = [
+      operationalNeed(
+        'shared-b',
+        'Jordan Kim',
+        'staff-jordan',
+        'Lunch',
+        '11:20',
+      ),
+      operationalNeed(
+        'shared-a',
+        'Avery Bennett',
+        'staff-avery',
+        'Lunch',
+        '11:20',
+      ),
+      operationalNeed(
+        'class-c',
+        'Casey Brooks',
+        'staff-casey',
+        'Math',
+        '08:00',
+        {
+          sharedResponsibilityKey: null,
+          responsibilityType: 'instruction',
+        },
+      ),
+    ];
+
+    expect(
+      projectOperationalNeeds(needs, { staffId: 'staff-jordan' }).map(
+        (need) => need.id,
+      ),
+    ).toEqual(['shared-a']);
+    expect(
+      projectOperationalNeeds(needs, { search: 'Jordan' }).map(
+        (need) => need.id,
+      ),
+    ).toEqual(['shared-a']);
+    expect(
+      projectOperationalNeeds(needs, { sort: 'teacher' }).map(
+        (need) => need.id,
+      ),
+    ).toEqual(['shared-a', 'class-c']);
+    expect(
+      projectOperationalNeeds(needs, { sort: 'time' }).map((need) => need.id),
+    ).toEqual(['class-c', 'shared-a']);
+  });
 });
+
+function operationalNeed(
+  id: string,
+  teacher: string,
+  staffId: string,
+  description: string,
+  startTime: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    id,
+    sharedResponsibilityKey: 'shared-lunch',
+    startTime,
+    endTime: startTime === '11:20' ? '12:00' : '08:50',
+    description,
+    responsibilityType: 'duty',
+    status: 'unresolved' as const,
+    absentStaff: { id: staffId, displayName: teacher },
+    assignedStaff: null,
+    ...overrides,
+  };
+}
 
 const absentStaff = staff('smith', 'Sam Smith');
 const coveringStaff = staff('jane', 'Jane Jones');

@@ -505,6 +505,20 @@ export async function addAbsence(input: {
   });
 }
 
+export async function removeAbsence(
+  absenceId: string,
+  input: {
+    readonly currentDate: string;
+    readonly scope: 'current_date' | 'entire_block';
+  },
+): Promise<PlanDetail> {
+  const result = await apiRequest<{ detail: PlanDetail }>(
+    `/api/absences/${encodeURIComponent(absenceId)}`,
+    { method: 'DELETE', body: JSON.stringify(input) },
+  );
+  return result.detail;
+}
+
 export async function getCandidates(
   assignmentId: string,
   options: {
@@ -607,6 +621,7 @@ export type AssignmentResolutionInput =
       readonly action: 'leave_uncovered';
       readonly acknowledged: boolean;
     }
+  | { readonly action: 'clear_resolution' }
   | {
       readonly action: 'split';
       readonly segments: readonly {

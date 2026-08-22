@@ -370,7 +370,8 @@ export class PlanningRepository {
         })),
       };
     });
-    const assigned = assignmentDtos.filter(
+    const operationalAssignments = operationalAssignmentRows(assignmentDtos);
+    const assigned = operationalAssignments.filter(
       (assignment) => assignment.status !== 'unresolved',
     ).length;
     const assignedStaffIds = new Set([
@@ -456,9 +457,9 @@ export class PlanningRepository {
       summary: {
         teachersAbsent: new Set(absences.map((absence) => absence.staff_id))
           .size,
-        assignments: assignmentDtos.length,
+        assignments: operationalAssignments.length,
         assigned,
-        unresolved: assignmentDtos.length - assigned,
+        unresolved: operationalAssignments.length - assigned,
         workloadWarnings,
       },
       settings: {
@@ -499,6 +500,25 @@ export class PlanningRepository {
       .first<{ id: string; display_name: string }>();
     if (!staff)
       throw new HttpError(400, 'invalid_staff', 'Choose an active teacher.');
+    const overlapping = await this.db
+      .prepare(
+        `SELECT a.id, a.staff_id, s.display_name AS staff_name, a.start_date,
+                a.end_date, a.start_time, a.end_time
+           FROM absences a JOIN staff s ON s.id = a.staff_id
+          WHERE a.staff_id = ? AND a.start_date <= ? AND a.end_date >= ?`,
+      )
+      .bind(input.staffId, input.endDate, input.startDate)
+      .all<AbsenceRow>();
+    const conflict = overlapping.results.find((absence) =>
+      absenceCoverageOverlaps(absence, input),
+    );
+    if (conflict) {
+      throw new HttpError(
+        409,
+        'absence_overlap',
+        `${staff.display_name} already has an overlapping Absence (${formatAbsenceRange(conflict)}). Edit or remove that Absence before adding another.`,
+      );
+    }
     const absenceId = crypto.randomUUID();
     const statements: D1PreparedStatement[] = [
       this.db
@@ -660,6 +680,152 @@ export class PlanningRepository {
     }
     await this.db.batch(statements);
     return { absenceId, dates };
+  }
+
+  async removeAbsence(
+    absenceId: string,
+    currentDate: string,
+    scope: 'current_date' | 'entire_block',
+    actorId: string,
+  ) {
+    const absence = await this.db
+      .prepare(
+        `SELECT id, staff_id, start_date, end_date, start_time, end_time,
+                created_by, created_at
+           FROM absences WHERE id = ?`,
+      )
+      .bind(absenceId)
+      .first<{
+        id: string;
+        staff_id: string;
+        start_date: string;
+        end_date: string;
+        start_time: string | null;
+        end_time: string | null;
+        created_by: string;
+        created_at: string;
+      }>();
+    if (!absence)
+      throw new HttpError(404, 'absence_not_found', 'Absence not found.');
+    if (currentDate < absence.start_date || currentDate > absence.end_date) {
+      throw new HttpError(
+        400,
+        'absence_date_mismatch',
+        'The viewed date is outside this Absence block.',
+      );
+    }
+    const affectedDates =
+      scope === 'entire_block'
+        ? enumerateWeekdaySchoolDates(absence.start_date, absence.end_date)
+        : [currentDate];
+    const affectedPlans =
+      affectedDates.length === 0
+        ? []
+        : (
+            await this.db
+              .prepare(
+                `SELECT id, date, status FROM daily_sub_plans
+                  WHERE date IN (${affectedDates.map(() => '?').join(', ')})`,
+              )
+              .bind(...affectedDates)
+              .all<{ id: string; date: string; status: string }>()
+          ).results;
+    const finalized = affectedPlans.find((plan) => plan.status === 'finalized');
+    if (finalized) {
+      throw new HttpError(
+        409,
+        'plan_finalized',
+        `Reopen the finalized Sub Plan for ${finalized.date} before removing this Absence.`,
+      );
+    }
+
+    const statements: D1PreparedStatement[] = affectedPlans.map((plan) =>
+      this.db
+        .prepare('DELETE FROM generated_messages WHERE daily_sub_plan_id = ?')
+        .bind(plan.id),
+    );
+    if (scope === 'entire_block') {
+      statements.push(
+        this.db
+          .prepare('DELETE FROM assignments WHERE absence_id = ?')
+          .bind(absence.id),
+        this.db.prepare('DELETE FROM absences WHERE id = ?').bind(absence.id),
+      );
+    } else {
+      statements.push(
+        this.db
+          .prepare(
+            `DELETE FROM assignments
+              WHERE absence_id = ? AND daily_sub_plan_id IN
+                    (SELECT id FROM daily_sub_plans WHERE date = ?)`,
+          )
+          .bind(absence.id, currentDate),
+      );
+      if (absence.start_date === absence.end_date) {
+        statements.push(
+          this.db.prepare('DELETE FROM absences WHERE id = ?').bind(absence.id),
+        );
+      } else if (currentDate === absence.start_date) {
+        statements.push(
+          this.db
+            .prepare(
+              `UPDATE absences SET start_date = ?, updated_by = ?,
+                      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                WHERE id = ?`,
+            )
+            .bind(shiftSchoolDate(currentDate, 1), actorId, absence.id),
+        );
+      } else if (currentDate === absence.end_date) {
+        statements.push(
+          this.db
+            .prepare(
+              `UPDATE absences SET end_date = ?, updated_by = ?,
+                      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                WHERE id = ?`,
+            )
+            .bind(shiftSchoolDate(currentDate, -1), actorId, absence.id),
+        );
+      } else {
+        const rightAbsenceId = crypto.randomUUID();
+        const rightStart = shiftSchoolDate(currentDate, 1);
+        statements.push(
+          this.db
+            .prepare(
+              `INSERT INTO absences (
+                 id, staff_id, start_date, end_date, start_time, end_time,
+                 created_by, created_at, updated_by
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .bind(
+              rightAbsenceId,
+              absence.staff_id,
+              rightStart,
+              absence.end_date,
+              absence.start_time,
+              absence.end_time,
+              absence.created_by,
+              absence.created_at,
+              actorId,
+            ),
+          this.db
+            .prepare(
+              `UPDATE assignments SET absence_id = ?
+                WHERE absence_id = ? AND daily_sub_plan_id IN
+                      (SELECT id FROM daily_sub_plans WHERE date >= ?)`,
+            )
+            .bind(rightAbsenceId, absence.id, rightStart),
+          this.db
+            .prepare(
+              `UPDATE absences SET end_date = ?, updated_by = ?,
+                      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                WHERE id = ?`,
+            )
+            .bind(shiftSchoolDate(currentDate, -1), actorId, absence.id),
+        );
+      }
+    }
+    await this.db.batch(statements);
+    return this.getPlan(currentDate);
   }
 
   async candidates(
@@ -978,6 +1144,58 @@ export class PlanningRepository {
     );
   }
 
+  async clearResolution(assignmentId: string, actorId: string) {
+    const assignment = await this.assignmentById(assignmentId);
+    await this.assertDraft(assignment.daily_sub_plan_id);
+    const targets = assignment.shared_responsibility_key
+      ? (
+          await this.db
+            .prepare(
+              `SELECT id, resolution_details_json FROM assignments
+                WHERE daily_sub_plan_id = ? AND shared_responsibility_key = ?`,
+            )
+            .bind(
+              assignment.daily_sub_plan_id,
+              assignment.shared_responsibility_key,
+            )
+            .all<{ id: string; resolution_details_json: string | null }>()
+        ).results
+      : [
+          {
+            id: assignment.id,
+            resolution_details_json: assignment.resolution_details_json,
+          },
+        ];
+    const now = new Date().toISOString();
+    const statements: D1PreparedStatement[] = [];
+    for (const target of targets) {
+      statements.push(
+        this.db
+          .prepare('DELETE FROM assignment_segments WHERE assignment_id = ?')
+          .bind(target.id),
+        this.db
+          .prepare(
+            `UPDATE assignments
+                SET assigned_staff_id = NULL, resolution_type = NULL,
+                    resolution_details_json = ?, status = 'unresolved',
+                    is_default = 0, conflict_explanation = NULL,
+                    override_acknowledged_at = NULL,
+                    override_acknowledged_by = NULL, updated_by = ?, updated_at = ?
+              WHERE id = ?`,
+          )
+          .bind(
+            noteOnlyDetailsJson(target.resolution_details_json),
+            actorId,
+            now,
+            target.id,
+          ),
+      );
+    }
+    await this.db.batch(statements);
+    const plan = await this.planById(assignment.daily_sub_plan_id);
+    return this.getPlan(plan.date);
+  }
+
   async coverTeacherWithSchoolSub(
     planId: string,
     absentStaffId: string,
@@ -1188,7 +1406,7 @@ export class PlanningRepository {
       throw new HttpError(
         409,
         'override_acknowledgement_required',
-        'Instructional Assignments require explicit acknowledgement before being left uncovered.',
+        'Instructional Assignments require explicit acknowledgement before being marked Not Covered.',
       );
     }
     const noteDetailsJson = noteOnlyDetailsJson(
@@ -1729,15 +1947,15 @@ export class PlanningRepository {
     await this.assertDraft(plan.id);
     const generated = await this.db
       .prepare(
-        `SELECT COUNT(*) AS count FROM assignments
-          WHERE daily_sub_plan_id = ?`,
+        `SELECT COUNT(*) AS count FROM absences
+          WHERE start_date <= ? AND end_date >= ?`,
       )
-      .bind(plan.id)
+      .bind(plan.date, plan.date)
       .first<CountRow>();
     if ((generated?.count ?? 0) > 0) {
       throw new HttpError(
         409,
-        'day_type_has_assignments',
+        'day_type_has_absences',
         'Change the A/B designation before recording absences for this date.',
       );
     }
@@ -2934,6 +3152,71 @@ function timeRangesOverlap(
 ): boolean {
   if (!absenceStart || !absenceEnd) return true;
   return absenceStart < endTime && startTime < absenceEnd;
+}
+
+function absenceCoverageOverlaps(
+  existing: Pick<
+    AbsenceRow,
+    'start_date' | 'end_date' | 'start_time' | 'end_time'
+  >,
+  proposed: {
+    readonly startDate: string;
+    readonly endDate: string;
+    readonly startTime: string | null;
+    readonly endTime: string | null;
+  },
+): boolean {
+  if (
+    existing.start_date > proposed.endDate ||
+    proposed.startDate > existing.end_date
+  )
+    return false;
+  if (
+    !existing.start_time ||
+    !existing.end_time ||
+    !proposed.startTime ||
+    !proposed.endTime
+  )
+    return true;
+  return (
+    existing.start_time < proposed.endTime &&
+    proposed.startTime < existing.end_time
+  );
+}
+
+function formatAbsenceRange(
+  absence: Pick<
+    AbsenceRow,
+    'start_date' | 'end_date' | 'start_time' | 'end_time'
+  >,
+): string {
+  const dates =
+    absence.start_date === absence.end_date
+      ? absence.start_date
+      : `${absence.start_date}–${absence.end_date}`;
+  return absence.start_time && absence.end_time
+    ? `${dates}, ${absence.start_time}–${absence.end_time}`
+    : dates;
+}
+
+function operationalAssignmentRows<
+  T extends {
+    readonly id: string;
+    readonly sharedResponsibilityKey: string | null;
+  },
+>(assignments: readonly T[]): T[] {
+  const result: T[] = [];
+  const shared = new Set<string>();
+  for (const assignment of assignments) {
+    if (!assignment.sharedResponsibilityKey) {
+      result.push(assignment);
+      continue;
+    }
+    if (shared.has(assignment.sharedResponsibilityKey)) continue;
+    shared.add(assignment.sharedResponsibilityKey);
+    result.push(assignment);
+  }
+  return result;
 }
 
 function resolutionInvalidation(

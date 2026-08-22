@@ -86,6 +86,10 @@ const absenceSchema = z
       });
     }
   });
+const absenceRemovalSchema = z.object({
+  currentDate: dateSchema,
+  scope: z.enum(['current_date', 'entire_block']),
+});
 const mappingSchema = z.object({
   kind: z.enum(['staff', 'room']),
   displayValue: z.string().trim().min(1),
@@ -159,6 +163,7 @@ const resolveSchema = z.discriminatedUnion('action', [
     action: z.literal('leave_uncovered'),
     acknowledged: z.boolean().default(false),
   }),
+  z.object({ action: z.literal('clear_resolution') }),
   z.object({
     action: z.literal('split'),
     assignAnyway: z.boolean().default(false),
@@ -713,6 +718,22 @@ export default {
         return jsonSuccess(result, requestId, 201);
       }
 
+      const absenceMatch = /^\/api\/absences\/([^/]+)$/.exec(url.pathname);
+      if (absenceMatch?.[1] && request.method === 'DELETE') {
+        const body = absenceRemovalSchema.parse(await readJson(request));
+        return jsonSuccess(
+          {
+            detail: await planningRepository.removeAbsence(
+              decodeURIComponent(absenceMatch[1]),
+              body.currentDate,
+              body.scope,
+              context.actor.id,
+            ),
+          },
+          requestId,
+        );
+      }
+
       const candidatesMatch = /^\/api\/assignments\/([^/]+)\/candidates$/.exec(
         url.pathname,
       );
@@ -760,6 +781,11 @@ export default {
           detail = await planningRepository.leaveUncovered(
             assignmentId,
             body.acknowledged,
+            context.actor.id,
+          );
+        } else if (body.action === 'clear_resolution') {
+          detail = await planningRepository.clearResolution(
+            assignmentId,
             context.actor.id,
           );
         } else if (body.action === 'combine_class') {

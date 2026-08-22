@@ -255,7 +255,21 @@ export function ResolveSubNeedDrawer({
           </section>
 
           {assignment.status !== 'unresolved' && (
-            <CurrentChoice assignment={assignment} />
+            <div className="space-y-2">
+              <CurrentChoice assignment={assignment} />
+              {hasPrimaryResolution(assignment) && (
+                <div className="flex justify-end">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void act({ action: 'clear_resolution' })}
+                  >
+                    Clear Resolution
+                  </Button>
+                </div>
+              )}
+            </div>
           )}
 
           <section aria-labelledby="assign-a-sub-title">
@@ -433,7 +447,7 @@ export function ResolveSubNeedDrawer({
                   }
                 }}
               >
-                Leave Uncovered
+                Mark Not Covered
               </Button>
             </div>
             {alternateEditor && (
@@ -577,7 +591,7 @@ export function ResolveSubNeedDrawer({
                   id="leave-uncovered-title"
                   className="text-danger-dark text-sm font-bold"
                 >
-                  Leave instructional coverage unresolved?
+                  Mark instructional coverage Not Covered?
                 </p>
                 <p className="mt-1 text-xs">
                   This Assignment is instructional. Confirming will record the
@@ -603,7 +617,7 @@ export function ResolveSubNeedDrawer({
                       });
                     }}
                   >
-                    Leave Uncovered Anyway
+                    Mark Not Covered Anyway
                   </Button>
                 </div>
               </div>
@@ -1620,6 +1634,14 @@ function detailsRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function hasPrimaryResolution(assignment: PlanAssignment): boolean {
+  if (assignment.status === 'unresolved') return false;
+  if (assignment.resolutionType !== 'solo_coverage') return true;
+  return (
+    typeof detailsRecord(assignment.resolutionDetails).soloKind === 'string'
+  );
 }
 
 function ErrorBanner({ message }: { readonly message: string }) {

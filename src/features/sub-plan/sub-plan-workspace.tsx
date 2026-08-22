@@ -19,6 +19,8 @@ import {
   assignmentResolutionLabel,
   buildFullScheduleTimeline,
   formatRoomLabel,
+  projectOperationalNeeds,
+  type OperationalNeedSort,
   type TimelineAbsentOverlay,
 } from '@/features/sub-plan/sub-plan-presentation';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +33,7 @@ import {
   listStaff,
   markUncoveredDuties,
   regenerateMessage,
+  removeAbsence,
   restoreTeacherDefaults,
   setPlanStatus,
   type BootstrapData,
@@ -66,8 +69,11 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
   const [filter, setFilter] = useState<NeedFilter>('all');
   const [staffFilter, setStaffFilter] = useState('');
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<OperationalNeedSort>('time');
   const [bulkFeedback, setBulkFeedback] = useState<string | null>(null);
   const [bulkPending, setBulkPending] = useState(false);
+  const [removingStaffId, setRemovingStaffId] = useState<string | null>(null);
+  const [showDutyConfirmation, setShowDutyConfirmation] = useState(false);
 
   const load = useCallback(async (targetDate: string, dayType?: 'A' | 'B') => {
     setLoading(true);
@@ -97,40 +103,24 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
 
   const assignments = useMemo(() => {
     if (!detail) return [];
-    const query = search.trim().toLocaleLowerCase('en-US');
-    return detail.assignments.filter((assignment) => {
-      const firstShared = assignment.sharedResponsibilityKey
-        ? detail.assignments.find(
-            (item) =>
-              item.sharedResponsibilityKey ===
-              assignment.sharedResponsibilityKey,
-          )
-        : assignment;
-      if (firstShared?.id !== assignment.id) return false;
-      if (
-        filter === 'classes' &&
-        assignment.responsibilityType !== 'instruction'
-      )
-        return false;
-      if (
-        filter === 'duties' &&
-        assignment.responsibilityType === 'instruction'
-      )
-        return false;
-      if (filter === 'unresolved' && assignment.status !== 'unresolved')
-        return false;
-      if (staffFilter && assignment.absentStaff.id !== staffFilter)
-        return false;
-      if (
-        query &&
-        !`${assignment.description} ${assignment.absentStaff.displayName} ${assignment.assignedStaff?.displayName ?? ''}`
-          .toLocaleLowerCase('en-US')
-          .includes(query)
-      )
-        return false;
-      return true;
+    return projectOperationalNeeds(detail.assignments, {
+      filter,
+      staffId: staffFilter,
+      search,
+      sort,
     });
-  }, [detail, filter, search, staffFilter]);
+  }, [detail, filter, search, sort, staffFilter]);
+
+  const unresolvedDuties = useMemo(
+    () =>
+      detail
+        ? projectOperationalNeeds(detail.assignments, {
+            filter: 'duties',
+            sort: 'time',
+          }).filter((assignment) => assignment.status === 'unresolved')
+        : [],
+    [detail],
+  );
 
   const selectedAssignment = detail?.assignments.find(
     (assignment) => assignment.id === selectedAssignmentId,
@@ -190,34 +180,23 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
 
   async function openReview() {
     if (!detail || bulkPending) return;
-    const seenSharedDuties = new Set<string>();
-    const eligibleDuties = detail.assignments.filter((assignment) => {
-      if (
-        assignment.status !== 'unresolved' ||
-        assignment.responsibilityType === 'instruction'
-      )
-        return false;
-      if (!assignment.sharedResponsibilityKey) return true;
-      if (seenSharedDuties.has(assignment.sharedResponsibilityKey))
-        return false;
-      seenSharedDuties.add(assignment.sharedResponsibilityKey);
-      return true;
-    });
-    if (
-      eligibleDuties.length > 0 &&
-      !window.confirm(
-        `${eligibleDuties.length} ${eligibleDuties.length === 1 ? 'duty does' : 'duties do'} not have coverage assigned. Mark ${eligibleDuties.length === 1 ? 'it' : 'them'} Not Covered and continue?`,
-      )
-    )
+    if (unresolvedDuties.length > 0) {
+      setShowDutyConfirmation(true);
       return;
+    }
+    await continueToReview(false);
+  }
+
+  async function continueToReview(markDuties: boolean) {
+    if (!detail || bulkPending) return;
     setBulkPending(true);
     setError(null);
     try {
       let next = detail;
-      if (eligibleDuties.length > 0)
-        next = await markUncoveredDuties(detail.plan.id);
+      if (markDuties) next = await markUncoveredDuties(detail.plan.id);
       if (!next.message) next = await regenerateMessage(next.plan.date);
       setDetail(next);
+      setShowDutyConfirmation(false);
       setShowReview(true);
     } catch (cause) {
       setError(errorMessage(cause));
@@ -301,7 +280,16 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
               <button
                 key={dayType}
                 type="button"
-                disabled={!detail || detail.plan.status === 'finalized'}
+                disabled={
+                  !detail ||
+                  detail.plan.status === 'finalized' ||
+                  detail.absences.length > 0
+                }
+                title={
+                  detail?.absences.length
+                    ? 'A/B cannot be changed after an Absence is recorded for this date.'
+                    : undefined
+                }
                 onClick={() => void load(date, dayType)}
                 className={cn(
                   'w-9 rounded text-xs font-bold disabled:opacity-50',
@@ -380,7 +368,7 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
               label="Teachers Absent"
               value={detail.summary.teachersAbsent}
             />
-            <Summary label="Assignments" value={detail.summary.assignments} />
+            <Summary label="Needs" value={detail.summary.assignments} />
             <Summary
               label="Assigned"
               value={detail.summary.assigned}
@@ -447,7 +435,14 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
                     className="border-border h-8 rounded-md border bg-white px-2 text-xs"
                   >
                     <option value="">All staff</option>
-                    {detail.absences.map((absence) => (
+                    {[
+                      ...new Map(
+                        detail.absences.map((absence) => [
+                          absence.staffId,
+                          absence,
+                        ]),
+                      ).values(),
+                    ].map((absence) => (
                       <option key={absence.staffId} value={absence.staffId}>
                         {absence.staffName}
                       </option>
@@ -481,8 +476,27 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
                       >
                         Restore Defaults
                       </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={bulkPending}
+                        onClick={() => setRemovingStaffId(staffFilter)}
+                      >
+                        Remove Absence
+                      </Button>
                     </div>
                   )}
+                  <select
+                    aria-label="Sort Needs"
+                    value={sort}
+                    onChange={(event) =>
+                      setSort(event.target.value as OperationalNeedSort)
+                    }
+                    className="border-border h-8 rounded-md border bg-white px-2 text-xs"
+                  >
+                    <option value="time">Sort: Time</option>
+                    <option value="teacher">Sort: Teacher</option>
+                  </select>
                   <label className="border-border ml-auto flex h-8 items-center gap-2 rounded-md border bg-white px-2">
                     <Search className="text-muted-foreground size-3.5" />
                     <span className="sr-only">Search Assignments</span>
@@ -535,6 +549,29 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
           detail={detail}
           onClose={() => setShowReview(false)}
           onChange={setDetail}
+        />
+      )}
+      {showDutyConfirmation && (
+        <UncoveredDutiesDialog
+          assignments={unresolvedDuties}
+          busy={bulkPending}
+          onBack={() => setShowDutyConfirmation(false)}
+          onContinue={() => void continueToReview(true)}
+        />
+      )}
+      {removingStaffId && detail && (
+        <RemoveAbsenceDialog
+          currentDate={date}
+          absences={detail.absences.filter(
+            (absence) => absence.staffId === removingStaffId,
+          )}
+          onClose={() => setRemovingStaffId(null)}
+          onRemoved={(next) => {
+            setDetail(next);
+            setRemovingStaffId(null);
+            setStaffFilter('');
+            setSelectedAssignmentId(null);
+          }}
         />
       )}
     </div>
@@ -839,6 +876,155 @@ function AbsenceDialog({
   );
 }
 
+function RemoveAbsenceDialog({
+  currentDate,
+  absences,
+  onClose,
+  onRemoved,
+}: {
+  readonly currentDate: string;
+  readonly absences: PlanDetail['absences'];
+  readonly onClose: () => void;
+  readonly onRemoved: (detail: PlanDetail) => void;
+}) {
+  const [absenceId, setAbsenceId] = useState(absences[0]?.id ?? '');
+  const [scope, setScope] = useState<'current_date' | 'entire_block'>(
+    'current_date',
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const selected = absences.find((absence) => absence.id === absenceId);
+  const multiDay = Boolean(selected && selected.startDate !== selected.endDate);
+
+  async function submit() {
+    if (!selected) return;
+    setBusy(true);
+    setError(null);
+    try {
+      onRemoved(
+        await removeAbsence(selected.id, {
+          currentDate,
+          scope: multiDay ? scope : 'entire_block',
+        }),
+      );
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="Remove Absence" onClose={onClose}>
+      <div className="space-y-4">
+        {error && <ErrorBanner message={error} />}
+        {absences.length > 1 && (
+          <Labeled label="Recorded Absence">
+            <select
+              value={absenceId}
+              onChange={(event) => setAbsenceId(event.target.value)}
+              className="field"
+            >
+              {absences.map((absence) => (
+                <option key={absence.id} value={absence.id}>
+                  {absence.startDate === absence.endDate
+                    ? absence.startDate
+                    : `${absence.startDate}–${absence.endDate}`}
+                  {absence.startTime
+                    ? ` · ${absence.startTime}–${absence.endTime}`
+                    : ' · Full day'}
+                </option>
+              ))}
+            </select>
+          </Labeled>
+        )}
+        <p className="text-sm">
+          Remove {selected?.staffName ?? 'this teacher'}’s recorded Absence?
+        </p>
+        {multiDay && (
+          <fieldset className="space-y-2 text-sm">
+            <legend className="mb-1 font-semibold">Removal scope</legend>
+            <label className="flex items-start gap-2">
+              <input
+                type="radio"
+                checked={scope === 'current_date'}
+                onChange={() => setScope('current_date')}
+              />
+              <span>Remove for {currentDate} only</span>
+            </label>
+            <label className="flex items-start gap-2">
+              <input
+                type="radio"
+                checked={scope === 'entire_block'}
+                onChange={() => setScope('entire_block')}
+              />
+              <span>
+                Remove the entire block ({selected?.startDate}–
+                {selected?.endDate})
+              </span>
+            </label>
+          </fieldset>
+        )}
+        <p className="text-muted-foreground text-xs">
+          Generated Needs for the removed date(s) will be deleted. Earlier
+          coverage invalidated by this Absence is not restored automatically.
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={busy || !selected} onClick={() => void submit()}>
+            Remove Absence
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function UncoveredDutiesDialog({
+  assignments,
+  busy,
+  onBack,
+  onContinue,
+}: {
+  readonly assignments: readonly PlanAssignment[];
+  readonly busy: boolean;
+  readonly onBack: () => void;
+  readonly onContinue: () => void;
+}) {
+  return (
+    <Modal title="Some duties do not have coverage" onClose={onBack}>
+      <div className="space-y-4">
+        <p className="text-muted-foreground text-sm">
+          Review the non-instructional Needs that will be marked Not Covered.
+        </p>
+        <ul className="border-border divide-border divide-y rounded-md border">
+          {assignments.map((assignment) => (
+            <li key={assignment.id} className="px-3 py-2 text-sm">
+              <p className="font-semibold">{assignment.description}</p>
+              <p className="text-muted-foreground text-xs">
+                {assignment.startTime}–{assignment.endTime} ·{' '}
+                {assignment.absentStaff.displayName}
+                {assignment.room
+                  ? ` · ${formatRoomLabel(assignment.room)}`
+                  : ''}
+              </p>
+            </li>
+          ))}
+        </ul>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" disabled={busy} onClick={onBack}>
+            Back to Plan
+          </Button>
+          <Button disabled={busy} onClick={onContinue}>
+            Mark {assignments.length} Not Covered &amp; Continue
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function ReviewDialog({
   detail,
   onClose,
@@ -875,6 +1061,37 @@ function ReviewDialog({
   const manuallyEdited = Boolean(
     detail.message && html !== detail.message.generatedHtml,
   );
+  const hasUnsavedChanges = Boolean(
+    detail.message && html !== detail.message.editedHtml,
+  );
+
+  function requestClose() {
+    if (
+      hasUnsavedChanges &&
+      !window.confirm('Discard unsaved message edits and close Review?')
+    )
+      return;
+    onClose();
+  }
+
+  async function finalize() {
+    setBusy(true);
+    setError(null);
+    try {
+      let next = detail;
+      if (hasUnsavedChanges) {
+        next = await editMessage(detail.plan.date, html);
+        onChange(next);
+      }
+      next = await setPlanStatus(next.plan.date, 'finalized');
+      onChange(next);
+      setHtml(next.message?.editedHtml ?? '');
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function copyMessage() {
     const text = htmlToClipboardText(html);
@@ -895,7 +1112,7 @@ function ReviewDialog({
   }
 
   return (
-    <Modal title="Review & Finalize" onClose={onClose} wide>
+    <Modal title="Review & Finalize" onClose={requestClose} wide>
       <div className="space-y-4">
         {error && <ErrorBanner message={error} />}
         <div className="flex items-center justify-between gap-3">
@@ -969,9 +1186,7 @@ function ReviewDialog({
           {detail.plan.status === 'draft' ? (
             <Button
               disabled={busy || detail.summary.unresolved > 0}
-              onClick={() =>
-                void run(() => setPlanStatus(detail.plan.date, 'finalized'))
-              }
+              onClick={() => void finalize()}
             >
               <Check className="size-4" /> Finalize
             </Button>

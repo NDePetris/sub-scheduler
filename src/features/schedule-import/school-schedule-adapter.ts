@@ -197,7 +197,7 @@ function parseEntries(
         continue;
       }
 
-      const parsed = parseTrailingRoom(description, header.room);
+      const parsed = parseTrailingRoom(description);
       const classification = classifyActivity(parsed.description);
       entries.push({
         sourceSheet: sheet.name,
@@ -284,12 +284,14 @@ function classifyActivity(description: string): {
 }
 
 /** Room tokens are deliberately narrow so meaningful parentheticals remain text. */
-function parseTrailingRoom(
-  description: string,
-  explicitRoom: string | null,
-): { description: string; room: string | null } {
-  if (explicitRoom) return { description, room: null };
-  const match = /^(.*?)\s*\(([0-9]{1,4}[A-Za-z]?)\)\s*$/.exec(description);
+function parseTrailingRoom(description: string): {
+  description: string;
+  room: string | null;
+} {
+  const match =
+    /^(.*?)\s*\(([0-9]{1,4}[A-Za-z]?|[A-Za-z]{1,4}\d+[A-Za-z]?|[A-Za-z]{1,4}-\d+[A-Za-z]?)\)\s*$/.exec(
+      description,
+    );
   if (!match?.[1] || !match[2]) return { description, room: null };
   return { description: match[1].trim(), room: match[2] };
 }
