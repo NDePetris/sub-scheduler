@@ -83,4 +83,22 @@ describe('initial migration and local seed', () => {
         .run(),
     ).rejects.toThrow();
   });
+
+  it('stores structured and generated-message source revisions', async () => {
+    const planColumns = await testEnv.DB.prepare(
+      `PRAGMA table_info(daily_sub_plans)`,
+    ).all<{ name: string; notnull: number; dflt_value: string | null }>();
+    const messageColumns = await testEnv.DB.prepare(
+      `PRAGMA table_info(generated_messages)`,
+    ).all<{ name: string }>();
+
+    expect(
+      planColumns.results.find(
+        (column) => column.name === 'structured_revision',
+      ),
+    ).toMatchObject({ notnull: 1, dflt_value: '0' });
+    expect(messageColumns.results.map((column) => column.name)).toContain(
+      'source_plan_revision',
+    );
+  });
 });

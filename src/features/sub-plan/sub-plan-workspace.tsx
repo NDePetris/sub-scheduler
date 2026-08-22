@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Clipboard,
   RefreshCw,
-  Search,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -15,10 +14,12 @@ import { normalizeToSchoolDay, shiftSchoolDay } from '@/domain/calendar';
 import { isTeacherRole } from '@/domain/staff';
 import { ResolveSubNeedDrawer } from '@/features/sub-plan/resolve-sub-need-drawer';
 import {
+  affectedNeedDescription,
   assignmentNote,
   assignmentResolutionLabel,
   buildFullScheduleTimeline,
   formatRoomLabel,
+  messageFreshnessState,
   projectOperationalNeeds,
   type OperationalNeedSort,
   type TimelineAbsentOverlay,
@@ -68,7 +69,6 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
   const [view, setView] = useState<ViewMode>('affected');
   const [filter, setFilter] = useState<NeedFilter>('all');
   const [staffFilter, setStaffFilter] = useState('');
-  const [search, setSearch] = useState('');
   const [sort, setSort] = useState<OperationalNeedSort>('time');
   const [bulkFeedback, setBulkFeedback] = useState<string | null>(null);
   const [bulkPending, setBulkPending] = useState(false);
@@ -106,10 +106,9 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
     return projectOperationalNeeds(detail.assignments, {
       filter,
       staffId: staffFilter,
-      search,
       sort,
     });
-  }, [detail, filter, search, sort, staffFilter]);
+  }, [detail, filter, sort, staffFilter]);
 
   const unresolvedDuties = useMemo(
     () =>
@@ -194,7 +193,6 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
     try {
       let next = detail;
       if (markDuties) next = await markUncoveredDuties(detail.plan.id);
-      if (!next.message) next = await regenerateMessage(next.plan.date);
       setDetail(next);
       setShowDutyConfirmation(false);
       setShowReview(true);
@@ -410,107 +408,94 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
 
             {view === 'affected' ? (
               <>
-                <div className="border-border bg-muted/40 flex flex-wrap items-center gap-2 border-b px-4 py-2.5">
-                  {(['all', 'classes', 'duties', 'unresolved'] as const).map(
-                    (value) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => setFilter(value)}
-                        className={cn(
-                          'rounded-full border px-2.5 py-1 text-xs font-semibold capitalize',
-                          filter === value
-                            ? 'border-brand bg-brand-soft text-brand-dark'
-                            : 'border-border text-muted-foreground bg-white',
-                        )}
-                      >
-                        {value === 'all' ? 'All Needs' : value}
-                      </button>
-                    ),
-                  )}
-                  <select
-                    aria-label="Filter by absent staff"
-                    value={staffFilter}
-                    onChange={(event) => setStaffFilter(event.target.value)}
-                    className="border-border h-8 rounded-md border bg-white px-2 text-xs"
-                  >
-                    <option value="">All staff</option>
-                    {[
-                      ...new Map(
-                        detail.absences.map((absence) => [
-                          absence.staffId,
-                          absence,
-                        ]),
-                      ).values(),
-                    ].map((absence) => (
-                      <option key={absence.staffId} value={absence.staffId}>
-                        {absence.staffName}
-                      </option>
-                    ))}
-                  </select>
-                  {staffFilter && detail.plan.status === 'draft' && (
-                    <div className="border-border flex items-center gap-1.5 border-l pl-2">
-                      <span className="text-foreground text-xs font-semibold">
-                        Actions for{' '}
-                        {
-                          detail.absences.find(
-                            (absence) => absence.staffId === staffFilter,
-                          )?.staffName
-                        }
-                      </span>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        disabled={bulkPending}
-                        onClick={() => void runTeacherBulkAction('school-sub')}
-                      >
-                        Use School Sub
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        disabled={bulkPending}
-                        onClick={() =>
-                          void runTeacherBulkAction('restore-defaults')
-                        }
-                      >
-                        Restore Defaults
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        disabled={bulkPending}
-                        onClick={() => setRemovingStaffId(staffFilter)}
-                      >
-                        Remove Absence
-                      </Button>
-                    </div>
-                  )}
-                  <select
-                    aria-label="Sort Needs"
-                    value={sort}
-                    onChange={(event) =>
-                      setSort(event.target.value as OperationalNeedSort)
-                    }
-                    className="border-border h-8 rounded-md border bg-white px-2 text-xs"
-                  >
-                    <option value="time">Sort: Time</option>
-                    <option value="teacher">Sort: Teacher</option>
-                  </select>
-                  <label className="border-border ml-auto flex h-8 items-center gap-2 rounded-md border bg-white px-2">
-                    <Search className="text-muted-foreground size-3.5" />
-                    <span className="sr-only">Search Assignments</span>
-                    <input
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                      placeholder="Search"
-                      className="w-44 bg-transparent text-xs outline-none"
-                    />
-                  </label>
+                <div className="border-border bg-muted/40 flex flex-wrap items-center justify-between gap-3 border-b px-4 py-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(['all', 'classes', 'duties', 'unresolved'] as const).map(
+                      (value) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setFilter(value)}
+                          className={cn(
+                            'rounded-full border px-2.5 py-1 text-xs font-semibold capitalize',
+                            filter === value
+                              ? 'border-brand bg-brand-soft text-brand-dark'
+                              : 'border-border text-muted-foreground bg-white',
+                          )}
+                        >
+                          {value === 'all' ? 'All Needs' : value}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                  <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                    <select
+                      aria-label="Filter by absent staff"
+                      value={staffFilter}
+                      onChange={(event) => setStaffFilter(event.target.value)}
+                      className="border-border h-8 rounded-md border bg-white px-2 text-xs"
+                    >
+                      <option value="">All staff</option>
+                      {[
+                        ...new Map(
+                          detail.absences.map((absence) => [
+                            absence.staffId,
+                            absence,
+                          ]),
+                        ).values(),
+                      ].map((absence) => (
+                        <option key={absence.staffId} value={absence.staffId}>
+                          {absence.staffName}
+                        </option>
+                      ))}
+                    </select>
+                    {staffFilter && detail.plan.status === 'draft' && (
+                      <div className="border-border flex items-center gap-1.5 border-l pl-2">
+                        <span className="text-foreground text-xs font-semibold">
+                          Actions for{' '}
+                          {
+                            detail.absences.find(
+                              (absence) => absence.staffId === staffFilter,
+                            )?.staffName
+                          }
+                        </span>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={bulkPending}
+                          onClick={() =>
+                            void runTeacherBulkAction('school-sub')
+                          }
+                        >
+                          Use School Sub
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={bulkPending}
+                          onClick={() =>
+                            void runTeacherBulkAction('restore-defaults')
+                          }
+                        >
+                          Restore Defaults
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={bulkPending}
+                          onClick={() => setRemovingStaffId(staffFilter)}
+                        >
+                          Remove Absence
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <AssignmentTable
                   assignments={assignments}
                   totalAssignments={detail.assignments.length}
+                  sort={sort}
+                  onSort={setSort}
                   onOpen={setSelectedAssignmentId}
                 />
               </>
@@ -540,7 +525,8 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
           onClose={() => setSelectedAssignmentId(null)}
           onChange={(next) => {
             setDetail(next);
-            setSelectedAssignmentId(null);
+            if (!selectedAssignment.sharedResponsibilityKey)
+              setSelectedAssignmentId(null);
           }}
         />
       )}
@@ -581,10 +567,14 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
 function AssignmentTable({
   assignments,
   totalAssignments,
+  sort,
+  onSort,
   onOpen,
 }: {
   readonly assignments: readonly PlanAssignment[];
   readonly totalAssignments: number;
+  readonly sort: OperationalNeedSort;
+  readonly onSort: (sort: OperationalNeedSort) => void;
   readonly onOpen: (id: string) => void;
 }) {
   if (assignments.length === 0) {
@@ -600,8 +590,20 @@ function AssignmentTable({
     <table className="w-full table-fixed text-left text-sm">
       <thead className="bg-muted/50 text-muted-foreground text-xs">
         <tr>
-          <th className="w-32 px-4 py-2.5">Time</th>
-          <th className="w-44 px-3 py-2.5">Absent Teacher</th>
+          <SortableHeader
+            className="w-32 px-4 py-2.5"
+            active={sort === 'time'}
+            onClick={() => onSort('time')}
+          >
+            Time
+          </SortableHeader>
+          <SortableHeader
+            className="w-44 px-3 py-2.5"
+            active={sort === 'teacher'}
+            onClick={() => onSort('teacher')}
+          >
+            Absent Teacher
+          </SortableHeader>
           <th className="w-28 px-3 py-2.5">Type</th>
           <th className="w-[22rem] px-3 py-2.5">Class / Responsibility</th>
           <th className="w-72 px-3 py-2.5">Assigned</th>
@@ -630,8 +632,18 @@ function AssignmentTable({
             <td className="px-3 py-3 capitalize">
               {assignment.responsibilityType.replace('_', ' ')}
             </td>
-            <td className="truncate px-3 py-3" title={assignment.description}>
-              {assignment.description}
+            <td className="px-3 py-3" title={assignment.description}>
+              <span className="block truncate">
+                {affectedNeedDescription(
+                  assignment.description,
+                  assignment.room,
+                )}
+              </span>
+              {formatRoomLabel(assignment.room) && (
+                <span className="text-muted-foreground block truncate text-xs">
+                  {formatRoomLabel(assignment.room)}
+                </span>
+              )}
             </td>
             <td className="px-3 py-3">
               <AssignedCell assignment={assignment} />
@@ -643,6 +655,38 @@ function AssignmentTable({
         ))}
       </tbody>
     </table>
+  );
+}
+
+function SortableHeader({
+  active,
+  onClick,
+  className,
+  children,
+}: {
+  readonly active: boolean;
+  readonly onClick: () => void;
+  readonly className: string;
+  readonly children: React.ReactNode;
+}) {
+  return (
+    <th className={className} aria-sort={active ? 'other' : 'none'}>
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          'inline-flex items-center gap-1 font-semibold',
+          active ? 'text-foreground' : 'hover:text-foreground',
+        )}
+      >
+        {children}
+        {active && (
+          <span className="text-brand text-[9px]" aria-hidden="true">
+            ●
+          </span>
+        )}
+      </button>
+    </th>
   );
 }
 
@@ -757,6 +801,7 @@ function AbsenceDialog({
               onBlur={() => window.setTimeout(() => setOptionsOpen(false), 0)}
               placeholder="Search active teachers"
               className="field"
+              autoFocus
               required
             />
             {optionsOpen && (
@@ -1036,8 +1081,10 @@ function ReviewDialog({
 }) {
   const [html, setHtml] = useState(detail.message?.editedHtml ?? '');
   const editorRef = useRef<HTMLDivElement>(null);
+  const initialRefreshStarted = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const freshness = messageFreshnessState(detail.message);
 
   async function run(operation: () => Promise<PlanDetail>) {
     setBusy(true);
@@ -1058,8 +1105,28 @@ function ReviewDialog({
       editorRef.current.innerHTML = html;
   }, [html]);
 
+  useEffect(() => {
+    if (
+      initialRefreshStarted.current ||
+      detail.plan.status !== 'draft' ||
+      (freshness !== 'missing' && freshness !== 'stale_unedited')
+    )
+      return;
+    initialRefreshStarted.current = true;
+    setBusy(true);
+    setError(null);
+    void regenerateMessage(detail.plan.date)
+      .then((next) => {
+        onChange(next);
+        setHtml(next.message?.editedHtml ?? '');
+      })
+      .catch((cause: unknown) => setError(errorMessage(cause)))
+      .finally(() => setBusy(false));
+  }, [detail.plan.date, detail.plan.status, freshness, onChange]);
+
   const manuallyEdited = Boolean(
-    detail.message && html !== detail.message.generatedHtml,
+    detail.message?.isManuallyEdited ||
+    (detail.message && html !== detail.message.generatedHtml),
   );
   const hasUnsavedChanges = Boolean(
     detail.message && html !== detail.message.editedHtml,
@@ -1115,28 +1182,49 @@ function ReviewDialog({
     <Modal title="Review & Finalize" onClose={requestClose} wide>
       <div className="space-y-4">
         {error && <ErrorBanner message={error} />}
+        {freshness === 'stale_edited' && (
+          <div
+            className="border-warning/40 bg-warning-soft text-warning-dark rounded-md border p-3"
+            role="status"
+          >
+            <p className="text-sm font-bold">Sub Plan changed</p>
+            <p className="mt-1 text-xs">
+              This message was generated before the latest coverage changes.
+              Regenerate from the current plan before finalizing.
+            </p>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-3">
           <p className="text-muted-foreground text-sm">
             Message edits are independent of structured Assignments.
           </p>
           <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={busy}
-              onClick={() => {
-                if (
-                  manuallyEdited &&
-                  !window.confirm(
-                    'Regenerate message? Manual edits will be replaced.',
+            {detail.plan.status === 'draft' ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => {
+                  if (
+                    (manuallyEdited || hasUnsavedChanges) &&
+                    !window.confirm(
+                      'Regenerate message? Manual edits will be replaced.',
+                    )
                   )
-                )
-                  return;
-                void run(() => regenerateMessage(detail.plan.date));
-              }}
-            >
-              <RefreshCw className="size-3.5" /> Regenerate
-            </Button>
+                    return;
+                  void run(() => regenerateMessage(detail.plan.date));
+                }}
+              >
+                <RefreshCw className="size-3.5" />{' '}
+                {freshness === 'stale_edited'
+                  ? 'Regenerate from Current Plan'
+                  : 'Regenerate'}
+              </Button>
+            ) : (
+              <p className="text-muted-foreground max-w-48 text-right text-xs">
+                Reopen the plan before regenerating its message.
+              </p>
+            )}
             <Button
               size="sm"
               variant="secondary"
@@ -1185,7 +1273,9 @@ function ReviewDialog({
           </Button>
           {detail.plan.status === 'draft' ? (
             <Button
-              disabled={busy || detail.summary.unresolved > 0}
+              disabled={
+                busy || detail.summary.unresolved > 0 || freshness !== 'fresh'
+              }
               onClick={() => void finalize()}
             >
               <Check className="size-4" /> Finalize
@@ -1208,6 +1298,14 @@ function ReviewDialog({
             finalizing.
           </p>
         )}
+        {detail.plan.status === 'draft' &&
+          detail.summary.unresolved === 0 &&
+          freshness !== 'fresh' && (
+            <p className="text-warning-dark text-xs">
+              Regenerate the message from the current Sub Plan before
+              finalizing.
+            </p>
+          )}
         {detail.plan.finalizedAt && (
           <p className="text-muted-foreground text-xs">
             Most recently finalized{' '}

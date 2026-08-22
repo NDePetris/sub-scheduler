@@ -395,6 +395,11 @@ export type MessageResolution =
         readonly staffName: string;
       }[];
     }
+  | {
+      readonly kind: 'shared';
+      readonly staffNames: readonly string[];
+      readonly solo: boolean;
+    }
   | { readonly kind: 'structured'; readonly text: string }
   | { readonly kind: 'unresolved'; readonly text: string };
 
@@ -505,16 +510,33 @@ function renderMessageLine(assignment: MessageAssignment): {
     };
   }
   if (resolution.kind === 'split') {
-    const rendered = [...resolution.segments]
-      .sort((a, b) => a.startTime.localeCompare(b.startTime))
+    const ordered = [...resolution.segments].sort((a, b) =>
+      a.startTime.localeCompare(b.startTime),
+    );
+    const renderedText = ordered
       .map(
         (segment) =>
-          `${segment.staffName} ${segment.startTime}–${segment.endTime}`,
+          `${segment.startTime}–${segment.endTime} ${segment.staffName}`,
+      )
+      .join('; ');
+    const renderedHtml = ordered
+      .map(
+        (segment) =>
+          `${escapeHtml(`${segment.startTime}–${segment.endTime} `)}<strong>${escapeHtml(segment.staffName)}</strong>`,
       )
       .join('; ');
     return {
-      html: `${escapeHtml(prefix + rendered)} - ${escapeHtml(assignment.description + room)}`,
-      text: `${prefix}${rendered} - ${assignment.description}${room}`,
+      html: `${escapeHtml(prefix)}${renderedHtml} - ${escapeHtml(assignment.description + room)}`,
+      text: `${prefix}${renderedText} - ${assignment.description}${room}`,
+    };
+  }
+  if (resolution.kind === 'shared') {
+    const solo = resolution.solo ? ' solo' : '';
+    return {
+      html: `${escapeHtml(prefix)}${resolution.staffNames
+        .map((name) => `<strong>${escapeHtml(name)}</strong>`)
+        .join(' + ')}${solo} - ${escapeHtml(assignment.description + room)}`,
+      text: `${prefix}${resolution.staffNames.join(' + ')}${solo} - ${assignment.description}${room}`,
     };
   }
   return {

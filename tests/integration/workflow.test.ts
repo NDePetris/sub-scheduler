@@ -24,6 +24,28 @@ function data<T>(payload: unknown): T {
   return (payload as { data: T }).data;
 }
 
+interface SharedDutyAssignment {
+  readonly id: string;
+  readonly description: string;
+  readonly status: string;
+  readonly resolutionType: string | null;
+  readonly sharedDutyStaffing: {
+    readonly capacity: number;
+    readonly vacantPositions: number;
+    readonly filledReplacementPositions: number;
+    readonly actualStaff: readonly {
+      readonly id: string;
+      readonly kind: 'scheduled' | 'replacement';
+    }[];
+    readonly positions: readonly {
+      readonly absent: boolean;
+      readonly assignmentId: string | null;
+      readonly replacement: { readonly id: string } | null;
+      readonly hasExplicitResolution: boolean;
+    }[];
+  } | null;
+}
+
 describe('persisted MVP workflow', () => {
   it('resolves a structurally shared duty once with scheduled and replacement Solo Coverage', async () => {
     await testEnv.DB.batch([
@@ -179,6 +201,285 @@ describe('persisted MVP workflow', () => {
       `UPDATE schedule_entries SET requires_sub = 0
           WHERE id IN ('shared_avery', 'shared_jordan')`,
     ).run();
+  });
+
+  it('preserves shared-duty replacement capacity while deriving operational Solo', async () => {
+    const entryIds = [
+      'capacity_shared_avery',
+      'capacity_shared_jordan',
+      'capacity_morgan_plan',
+      'capacity_riley_plan',
+    ];
+    await testEnv.DB.prepare(
+      `INSERT INTO schedule_entries
+         (id, schedule_version_id, staff_id, day_type, start_time, end_time,
+          activity_type, category, description, room_id, requires_sub)
+       VALUES
+         ('capacity_shared_avery', 'schedule_2026_fall', 'staff_avery_bennett',
+          'ALL', '16:00', '16:40', 'duty', 'LUNCH', 'Capacity Lunch', 'room_pri_101', 1),
+         ('capacity_shared_jordan', 'schedule_2026_fall', 'staff_jordan_kim',
+          'ALL', '16:00', '16:40', 'duty', 'LUNCH', 'Capacity Lunch', 'room_pri_101', 1),
+         ('capacity_morgan_plan', 'schedule_2026_fall', 'staff_morgan_ellis',
+          'ALL', '16:00', '16:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+         ('capacity_riley_plan', 'schedule_2026_fall', 'staff_riley_quinn',
+          'ALL', '16:00', '16:40', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0)`,
+    ).run();
+
+    const oneAbsentDate = '2027-01-04';
+    await api('/api/absences', 'POST', {
+      staffId: 'staff_avery_bennett',
+      startDate: oneAbsentDate,
+      endDate: oneAbsentDate,
+      startTime: '16:00',
+      endTime: '16:40',
+    });
+    const oneAbsent = data<{
+      detail: {
+        assignments: Array<SharedDutyAssignment>;
+      };
+    }>(
+      (await api(`/api/plans/${oneAbsentDate}`)).payload,
+    ).detail.assignments.filter(
+      (item) => item.description === 'Capacity Lunch',
+    );
+    expect(oneAbsent).toHaveLength(1);
+    expect(oneAbsent[0]?.sharedDutyStaffing).toMatchObject({
+      capacity: 2,
+      vacantPositions: 1,
+      filledReplacementPositions: 0,
+      actualStaff: [
+        {
+          id: 'staff_jordan_kim',
+          kind: 'scheduled',
+        },
+      ],
+    });
+    expect(oneAbsent[0]).toMatchObject({
+      status: 'assigned',
+      resolutionType: 'solo_coverage',
+    });
+    const oneCovered = data<{
+      detail: { assignments: Array<SharedDutyAssignment> };
+    }>(
+      (
+        await api(`/api/assignments/${oneAbsent[0]!.id}/resolve`, 'POST', {
+          action: 'assign',
+          staffId: 'staff_morgan_ellis',
+          assignAnyway: false,
+        })
+      ).payload,
+    ).detail.assignments.find((item) => item.description === 'Capacity Lunch');
+    expect(oneCovered?.sharedDutyStaffing?.filledReplacementPositions).toBe(1);
+    expect(
+      oneCovered?.sharedDutyStaffing?.actualStaff
+        .map((staff) => staff.id)
+        .sort(),
+    ).toEqual(['staff_jordan_kim', 'staff_morgan_ellis']);
+    expect(oneCovered?.resolutionType).not.toBe('solo_coverage');
+
+    const bothAbsentDate = '2027-01-05';
+    for (const staffId of ['staff_avery_bennett', 'staff_jordan_kim']) {
+      await api('/api/absences', 'POST', {
+        staffId,
+        startDate: bothAbsentDate,
+        endDate: bothAbsentDate,
+        startTime: '16:00',
+        endTime: '16:40',
+      });
+    }
+    let bothDetail = data<{
+      detail: {
+        assignments: Array<SharedDutyAssignment>;
+        summary: { unresolved: number };
+      };
+    }>((await api(`/api/plans/${bothAbsentDate}`)).payload).detail;
+    let siblings = bothDetail.assignments.filter(
+      (item) => item.description === 'Capacity Lunch',
+    );
+    expect(siblings).toHaveLength(2);
+    expect(siblings[0]?.sharedDutyStaffing).toMatchObject({
+      vacantPositions: 2,
+      filledReplacementPositions: 0,
+      actualStaff: [],
+    });
+    expect(siblings[0]?.status).toBe('unresolved');
+
+    const firstPosition = siblings[0]!.sharedDutyStaffing!.positions.find(
+      (position) => position.absent && position.assignmentId,
+    )!;
+    bothDetail = data<{
+      detail: {
+        assignments: Array<SharedDutyAssignment>;
+        summary: { unresolved: number };
+      };
+    }>(
+      (
+        await api(
+          `/api/assignments/${firstPosition.assignmentId}/resolve`,
+          'POST',
+          {
+            action: 'assign',
+            staffId: 'staff_morgan_ellis',
+            assignAnyway: false,
+          },
+        )
+      ).payload,
+    ).detail;
+    siblings = bothDetail.assignments.filter(
+      (item) => item.description === 'Capacity Lunch',
+    );
+    expect(siblings[0]?.sharedDutyStaffing).toMatchObject({
+      filledReplacementPositions: 1,
+      actualStaff: [{ id: 'staff_morgan_ellis', kind: 'replacement' }],
+    });
+    expect(siblings[0]).toMatchObject({
+      status: 'assigned',
+      resolutionType: 'solo_coverage',
+    });
+    expect(bothDetail.summary.unresolved).toBe(0);
+    expect(
+      siblings[0]?.sharedDutyStaffing?.positions.some(
+        (position) =>
+          position.absent &&
+          position.assignmentId &&
+          !position.hasExplicitResolution,
+      ),
+    ).toBe(true);
+
+    const oneReplacementMessage = data<{
+      detail: { message: { generatedText: string } };
+    }>(
+      (await api(`/api/plans/${bothAbsentDate}/message/regenerate`, 'POST', {}))
+        .payload,
+    ).detail.message.generatedText;
+    expect(oneReplacementMessage.match(/Capacity Lunch/g)).toHaveLength(1);
+    expect(oneReplacementMessage).toContain('Morgan Ellis solo');
+    expect(
+      (
+        await api(`/api/plans/${bothAbsentDate}/status`, 'POST', {
+          status: 'finalized',
+        })
+      ).response.status,
+    ).toBe(200);
+    await api(`/api/plans/${bothAbsentDate}/status`, 'POST', {
+      status: 'draft',
+    });
+
+    const unfilledPosition = siblings[0]!.sharedDutyStaffing!.positions.find(
+      (position) =>
+        position.absent &&
+        position.assignmentId &&
+        !position.hasExplicitResolution,
+    )!;
+    bothDetail = data<{
+      detail: {
+        assignments: Array<SharedDutyAssignment>;
+        summary: { unresolved: number };
+      };
+    }>(
+      (
+        await api(
+          `/api/assignments/${unfilledPosition.assignmentId}/resolve`,
+          'POST',
+          {
+            action: 'assign',
+            staffId: 'staff_riley_quinn',
+            assignAnyway: false,
+          },
+        )
+      ).payload,
+    ).detail;
+    siblings = bothDetail.assignments.filter(
+      (item) => item.description === 'Capacity Lunch',
+    );
+    expect(siblings[0]?.sharedDutyStaffing?.filledReplacementPositions).toBe(2);
+    expect(
+      siblings[0]?.sharedDutyStaffing?.actualStaff
+        .map((staff) => staff.id)
+        .sort(),
+    ).toEqual(['staff_morgan_ellis', 'staff_riley_quinn']);
+    expect(siblings[0]?.resolutionType).not.toBe('solo_coverage');
+    const workloadRows = await testEnv.DB.prepare(
+      `SELECT assigned_staff_id, SUM(counts_toward_workload) AS count
+         FROM assignments
+        WHERE daily_sub_plan_id = (SELECT id FROM daily_sub_plans WHERE date = ?)
+          AND description = 'Capacity Lunch'
+        GROUP BY assigned_staff_id
+        ORDER BY assigned_staff_id`,
+    )
+      .bind(bothAbsentDate)
+      .all<{ assigned_staff_id: string; count: number }>();
+    expect(workloadRows.results).toEqual([
+      { assigned_staff_id: 'staff_morgan_ellis', count: 1 },
+      { assigned_staff_id: 'staff_riley_quinn', count: 1 },
+    ]);
+
+    const twoReplacementMessage = data<{
+      detail: { message: { generatedHtml: string; generatedText: string } };
+    }>(
+      (await api(`/api/plans/${bothAbsentDate}/message/regenerate`, 'POST', {}))
+        .payload,
+    ).detail.message;
+    expect(twoReplacementMessage.generatedHtml).toContain(
+      '<strong>Morgan Ellis</strong> + <strong>Riley Quinn</strong>',
+    );
+    expect(
+      twoReplacementMessage.generatedText.match(/Capacity Lunch/g),
+    ).toHaveLength(1);
+
+    const rileyPosition = siblings[0]!.sharedDutyStaffing!.positions.find(
+      (position) => position.replacement?.id === 'staff_riley_quinn',
+    )!;
+    const afterSecondClear = data<{
+      detail: { assignments: Array<SharedDutyAssignment> };
+    }>(
+      (
+        await api(
+          `/api/assignments/${rileyPosition.assignmentId}/resolve`,
+          'POST',
+          {
+            action: 'clear_resolution',
+          },
+        )
+      ).payload,
+    ).detail.assignments.find((item) => item.description === 'Capacity Lunch');
+    expect(afterSecondClear?.sharedDutyStaffing?.actualStaff).toEqual([
+      expect.objectContaining({ id: 'staff_morgan_ellis' }),
+    ]);
+    expect(afterSecondClear?.resolutionType).toBe('solo_coverage');
+
+    const morganPosition = afterSecondClear!.sharedDutyStaffing!.positions.find(
+      (position) => position.replacement?.id === 'staff_morgan_ellis',
+    )!;
+    const afterFirstClear = data<{
+      detail: {
+        assignments: Array<SharedDutyAssignment>;
+        summary: { unresolved: number };
+      };
+    }>(
+      (
+        await api(
+          `/api/assignments/${morganPosition.assignmentId}/resolve`,
+          'POST',
+          {
+            action: 'clear_resolution',
+          },
+        )
+      ).payload,
+    ).detail;
+    expect(
+      afterFirstClear.assignments.find(
+        (item) => item.description === 'Capacity Lunch',
+      )?.sharedDutyStaffing?.actualStaff,
+    ).toEqual([]);
+    expect(afterFirstClear.summary.unresolved).toBeGreaterThan(0);
+
+    await testEnv.DB.prepare(
+      `UPDATE schedule_entries SET requires_sub = 0
+        WHERE id IN (?, ?, ?, ?)`,
+    )
+      .bind(...entryIds)
+      .run();
   });
 
   it('uses normalized Teacher records and stable IDs for repeated Add Absence submissions', async () => {
@@ -1888,7 +2189,7 @@ describe('persisted MVP workflow', () => {
       data<{ detail: { message: { editedText: string } } }>(message.payload)
         .detail.message.editedText,
     ).toContain(
-      'Riley Quinn 08:00–08:20; Casey Brooks 08:20–08:40; Riley Quinn 08:40–08:50',
+      '08:00–08:20 Riley Quinn; 08:20–08:40 Casey Brooks; 08:40–08:50 Riley Quinn',
     );
 
     const rejectedConflict = await api(path, 'POST', {

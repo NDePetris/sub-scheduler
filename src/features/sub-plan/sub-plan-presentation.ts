@@ -11,6 +11,19 @@ export function formatRoomLabel(room: string | null): string | null {
   return value;
 }
 
+export function affectedNeedDescription(
+  description: string,
+  room: string | null,
+): string {
+  const trailing = /\s*\(([^)]+)\)\s*$/.exec(description);
+  if (!trailing) return description;
+  const trailingRoom = formatRoomLabel(trailing[1] ?? null);
+  const plannedRoom = formatRoomLabel(room);
+  return trailingRoom && plannedRoom && trailingRoom === plannedRoom
+    ? description.slice(0, trailing.index).trimEnd()
+    : description;
+}
+
 export type OperationalNeedSort = 'time' | 'teacher';
 
 export interface OperationalNeedInput {
@@ -31,7 +44,6 @@ export function projectOperationalNeeds<T extends OperationalNeedInput>(
   options: {
     readonly filter?: 'all' | 'classes' | 'duties' | 'unresolved';
     readonly staffId?: string;
-    readonly search?: string;
     readonly sort?: OperationalNeedSort;
   } = {},
 ): T[] {
@@ -44,7 +56,6 @@ export function projectOperationalNeeds<T extends OperationalNeedInput>(
     group.push(assignment);
     groups.set(key, group);
   }
-  const query = options.search?.trim().toLocaleLowerCase('en-US') ?? '';
   const projected: T[] = [];
   for (const group of groups.values()) {
     const canonical = [...group].sort((left, right) =>
@@ -68,15 +79,6 @@ export function projectOperationalNeeds<T extends OperationalNeedInput>(
       !group.some((item) => item.absentStaff.id === options.staffId)
     )
       continue;
-    if (
-      query &&
-      !group.some((item) =>
-        `${item.description} ${item.absentStaff.displayName} ${item.assignedStaff?.displayName ?? ''}`
-          .toLocaleLowerCase('en-US')
-          .includes(query),
-      )
-    )
-      continue;
     projected.push(canonical);
   }
   const teacherFirst = options.sort === 'teacher';
@@ -84,15 +86,28 @@ export function projectOperationalNeeds<T extends OperationalNeedInput>(
     const teacher = left.absentStaff.displayName.localeCompare(
       right.absentStaff.displayName,
     );
-    const time =
-      left.startTime.localeCompare(right.startTime) ||
-      left.endTime.localeCompare(right.endTime);
+    const start = left.startTime.localeCompare(right.startTime);
+    const end = left.endTime.localeCompare(right.endTime);
     return (
-      (teacherFirst ? teacher || time : time || teacher) ||
+      (teacherFirst ? teacher || start || end : start || teacher || end) ||
       left.description.localeCompare(right.description) ||
       left.id.localeCompare(right.id)
     );
   });
+}
+
+export type MessageFreshnessState =
+  'missing' | 'fresh' | 'stale_unedited' | 'stale_edited';
+
+export function messageFreshnessState(
+  message: {
+    readonly isStale: boolean;
+    readonly isManuallyEdited: boolean;
+  } | null,
+): MessageFreshnessState {
+  if (!message) return 'missing';
+  if (!message.isStale) return 'fresh';
+  return message.isManuallyEdited ? 'stale_edited' : 'stale_unedited';
 }
 
 export interface TimelineStaff {

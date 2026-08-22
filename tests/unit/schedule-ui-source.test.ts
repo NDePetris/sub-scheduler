@@ -30,6 +30,7 @@ describe('Add Absence staff selection source', () => {
     expect(source).toContain('selectedStaffId');
     expect(source).toContain("setSelectedStaffId('')");
     expect(source).toContain('staffId: person.id');
+    expect(source).toContain('autoFocus');
     expect(source).not.toContain('<datalist');
     expect(source).not.toContain("person.role === 'teacher'");
   });
@@ -105,6 +106,35 @@ describe('Daily Sub Plan resolution presentation source', () => {
     expect(workspace).toMatch(
       /staffFilter && detail\.plan\.status === 'draft'[\s\S]*?Actions for[\s\S]*?Use School Sub[\s\S]*?Restore Defaults/,
     );
+  });
+
+  it('uses compact board controls, planned rooms, and header sort modes', () => {
+    expect(workspace).not.toContain('aria-label="Sort Needs"');
+    expect(workspace).not.toContain('Search Assignments');
+    expect(workspace).toContain("onSort('time')");
+    expect(workspace).toContain("onSort('teacher')");
+    expect(workspace).toContain('formatRoomLabel(assignment.room)');
+    expect(workspace).toMatch(
+      /justify-between[\s\S]*?All Needs[\s\S]*?ml-auto[\s\S]*?Filter by absent staff/,
+    );
+  });
+
+  it('keeps clear actions visible per shared-duty replacement position', () => {
+    expect(drawer).toContain('Shared duty staffing');
+    expect(drawer).toContain('Replacement coverage');
+    expect(drawer).toContain('Clear Resolution');
+    expect(drawer).toContain('position.hasExplicitResolution');
+    expect(drawer).toContain('Solo (derived)');
+  });
+
+  it('keeps stale and regenerate errors in Review while finalized plans explain reopening', () => {
+    expect(workspace).toContain('Sub Plan changed');
+    expect(workspace).toContain('Regenerate from Current Plan');
+    expect(workspace).toContain(
+      'Reopen the plan before regenerating its message.',
+    );
+    expect(workspace).toContain('<ErrorBanner message={error} />');
+    expect(workspace).toContain("freshness !== 'fresh'");
   });
 });
 

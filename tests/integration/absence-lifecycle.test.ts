@@ -209,7 +209,7 @@ describe('Absence and resolution lifecycle', () => {
     ).toMatchObject({ count: 0 });
   });
 
-  it('clears direct and split primary resolution state while preserving the Note', async () => {
+  it('clears every explicit primary resolution while preserving supplemental details', async () => {
     const date = '2026-12-22';
     await api('/api/plans/ensure', 'POST', { date, dayType: 'A' });
     await addAbsence('staff_jordan_kim', date);
@@ -228,6 +228,53 @@ describe('Absence and resolution lifecycle', () => {
       roomId: null,
       note: 'Keep this note.',
     });
+
+    async function clearAndRead() {
+      const cleared = await api(path, 'POST', { action: 'clear_resolution' });
+      expect(cleared.response.status).toBe(200);
+      return data<{
+        detail: {
+          assignments: Array<{
+            id: string;
+            assignedStaff: unknown;
+            status: string;
+            resolutionType: string | null;
+            resolutionDetails: unknown;
+            segments: unknown[];
+          }>;
+        };
+      }>(cleared.payload).detail.assignments.find(
+        (item) => item.id === assignment!.id,
+      );
+    }
+
+    function expectReset(
+      value:
+        | {
+            assignedStaff: unknown;
+            status: string;
+            resolutionType: string | null;
+            resolutionDetails: unknown;
+            segments: unknown[];
+          }
+        | undefined,
+    ) {
+      expect(value).toMatchObject({
+        assignedStaff: null,
+        status: 'unresolved',
+        resolutionType: null,
+        resolutionDetails: { note: 'Keep this note.' },
+        segments: [],
+      });
+    }
+
+    await api(path, 'POST', {
+      action: 'assign',
+      staffId: 'staff_riley_quinn',
+      assignAnyway: false,
+    });
+    expectReset(await clearAndRead());
+
     await api(path, 'POST', {
       action: 'split',
       assignAnyway: true,
@@ -244,28 +291,31 @@ describe('Absence and resolution lifecycle', () => {
         },
       ],
     });
+    expectReset(await clearAndRead());
 
-    const cleared = await api(path, 'POST', { action: 'clear_resolution' });
-    expect(cleared.response.status).toBe(200);
-    const after = data<{
-      detail: {
-        assignments: Array<{
-          id: string;
-          status: string;
-          resolutionType: string | null;
-          resolutionDetails: unknown;
-          segments: unknown[];
-        }>;
-      };
-    }>(cleared.payload).detail.assignments.find(
-      (item) => item.id === assignment!.id,
-    );
-    expect(after).toMatchObject({
-      status: 'unresolved',
-      resolutionType: null,
-      resolutionDetails: { note: 'Keep this note.' },
-      segments: [],
+    await api(path, 'POST', {
+      action: 'leave_uncovered',
+      acknowledged: true,
     });
+    expectReset(await clearAndRead());
+
+    await api(path, 'POST', {
+      action: 'combine_class',
+      receivingScheduleEntryId: 'entry_avery_a_0800',
+      roomId: null,
+      note: 'Keep this note.',
+      overrideAcknowledged: false,
+    });
+    expectReset(await clearAndRead());
+
+    await api(path, 'POST', {
+      action: 'redistribute',
+      receivingStaffIds: ['staff_avery_bennett', 'staff_priya_nair'],
+      roomId: null,
+      note: 'Keep this note.',
+      overrideAcknowledged: true,
+    });
+    expectReset(await clearAndRead());
   });
 
   it('groups a shared duty by its block room and recomputes operational counts after removal', async () => {
@@ -364,6 +414,186 @@ describe('Absence and resolution lifecycle', () => {
     ).toMatchObject({
       plan: { status: 'finalized' },
       message: { editedHtml },
+    });
+  });
+
+  it('tracks generated-message freshness without overwriting manual edits', async () => {
+    const date = '2027-01-06';
+    await api('/api/plans/ensure', 'POST', { date, dayType: 'B' });
+    const added = await addAbsence('staff_avery_bennett', date);
+    const absenceId = data<{ absenceId: string }>(added.payload).absenceId;
+    const detail = data<{
+      detail: {
+        plan: { structuredRevision: number };
+        assignments: Array<{ id: string }>;
+        summary: { unresolved: number };
+        message: null;
+      };
+    }>((await api(`/api/plans/${date}`)).payload).detail;
+    expect(detail.summary.unresolved).toBe(0);
+    expect(detail.message).toBeNull();
+    const initialRevision = detail.plan.structuredRevision;
+    expect(initialRevision).toBeGreaterThan(0);
+
+    const generated = data<{
+      detail: {
+        plan: { structuredRevision: number };
+        message: {
+          sourcePlanRevision: number;
+          isStale: boolean;
+          isManuallyEdited: boolean;
+          editedHtml: string;
+        };
+      };
+    }>(
+      (await api(`/api/plans/${date}/message/regenerate`, 'POST', {})).payload,
+    ).detail;
+    expect(generated.message).toMatchObject({
+      sourcePlanRevision: initialRevision,
+      isStale: false,
+      isManuallyEdited: false,
+    });
+    const messageCount = async () =>
+      (
+        await testEnv.DB.prepare(
+          `SELECT COUNT(*) AS count FROM generated_messages
+            WHERE daily_sub_plan_id = (SELECT id FROM daily_sub_plans WHERE date = ?)`,
+        )
+          .bind(date)
+          .first<{ count: number }>()
+      )?.count ?? 0;
+    expect(await messageCount()).toBe(1);
+    await api(`/api/plans/${date}`);
+    expect(await messageCount()).toBe(1);
+
+    const changed = data<{
+      detail: {
+        plan: { structuredRevision: number };
+        message: {
+          editedHtml: string;
+          isStale: boolean;
+          isManuallyEdited: boolean;
+        };
+      };
+    }>(
+      (
+        await api(
+          `/api/assignments/${detail.assignments[0]!.id}/resolve`,
+          'POST',
+          {
+            action: 'update_details',
+            roomId: null,
+            note: 'Freshness check.',
+          },
+        )
+      ).payload,
+    ).detail;
+    expect(changed.plan.structuredRevision).toBe(initialRevision + 1);
+    expect(changed.message).toMatchObject({
+      isStale: true,
+      isManuallyEdited: false,
+    });
+
+    const manualHtml = '<p><strong>Keep this administrator edit.</strong></p>';
+    const edited = data<{
+      detail: {
+        plan: { structuredRevision: number };
+        message: {
+          editedHtml: string;
+          isStale: boolean;
+          isManuallyEdited: boolean;
+        };
+      };
+    }>(
+      (
+        await api(`/api/plans/${date}/message`, 'PATCH', {
+          editedHtml: manualHtml,
+        })
+      ).payload,
+    ).detail;
+    expect(edited.plan.structuredRevision).toBe(initialRevision + 1);
+    expect(edited.message).toMatchObject({
+      editedHtml: manualHtml,
+      isStale: true,
+      isManuallyEdited: true,
+    });
+    const staleFinalize = await api(`/api/plans/${date}/status`, 'POST', {
+      status: 'finalized',
+    });
+    expect(staleFinalize.response.status).toBe(409);
+    expect(
+      (staleFinalize.payload as { error: { code: string } }).error.code,
+    ).toBe('stale_generated_message');
+
+    const refreshed = data<{
+      detail: {
+        plan: { structuredRevision: number };
+        message: {
+          sourcePlanRevision: number;
+          editedHtml: string;
+          generatedHtml: string;
+          isStale: boolean;
+          isManuallyEdited: boolean;
+        };
+      };
+    }>(
+      (await api(`/api/plans/${date}/message/regenerate`, 'POST', {})).payload,
+    ).detail;
+    expect(refreshed.message).toMatchObject({
+      sourcePlanRevision: refreshed.plan.structuredRevision,
+      isStale: false,
+      isManuallyEdited: false,
+    });
+    expect(refreshed.message.editedHtml).toBe(refreshed.message.generatedHtml);
+    expect(refreshed.message.editedHtml).not.toBe(manualHtml);
+    expect(await messageCount()).toBe(2);
+
+    const freshManualHtml = '<p>Fresh manual wording.</p>';
+    const freshManual = data<{
+      detail: {
+        plan: { structuredRevision: number };
+        message: { isStale: boolean; isManuallyEdited: boolean };
+      };
+    }>(
+      (
+        await api(`/api/plans/${date}/message`, 'PATCH', {
+          editedHtml: freshManualHtml,
+        })
+      ).payload,
+    ).detail;
+    expect(freshManual.plan.structuredRevision).toBe(
+      refreshed.plan.structuredRevision,
+    );
+    expect(freshManual.message).toMatchObject({
+      isStale: false,
+      isManuallyEdited: true,
+    });
+    expect(
+      (
+        await api(`/api/plans/${date}/status`, 'POST', {
+          status: 'finalized',
+        })
+      ).response.status,
+    ).toBe(200);
+    await api(`/api/plans/${date}/status`, 'POST', { status: 'draft' });
+
+    const removed = data<{
+      detail: {
+        plan: { structuredRevision: number };
+        message: {
+          editedHtml: string;
+          isStale: boolean;
+          isManuallyEdited: boolean;
+        };
+      };
+    }>((await remove(absenceId, date, 'entire_block')).payload).detail;
+    expect(removed.plan.structuredRevision).toBe(
+      freshManual.plan.structuredRevision + 1,
+    );
+    expect(removed.message).toMatchObject({
+      editedHtml: freshManualHtml,
+      isStale: true,
+      isManuallyEdited: true,
     });
   });
 });

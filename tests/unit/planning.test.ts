@@ -548,9 +548,13 @@ describe('MVP planning domain', () => {
     });
     expect(rendered.html).toContain('<strong>Jane Smith solo</strong>');
     expect(rendered.text).toContain('Jane Smith solo - MS Lunch in Room 16');
-    expect(rendered.text).toContain(
-      'Teacher A 09:00–09:40; Teacher B 09:40–09:50',
+    expect(rendered.html).toContain(
+      '09:00–09:50 09:00–09:40 <strong>Teacher A</strong>; 09:40–09:50 <strong>Teacher B</strong> - EL Math',
     );
+    expect(rendered.text).toContain(
+      '09:00–09:50 09:00–09:40 Teacher A; 09:40–09:50 Teacher B - EL Math',
+    );
+    expect(rendered.text).not.toContain('**');
     expect(rendered.text.match(/MS Lunch/g)).toHaveLength(1);
     expect(rendered.text.indexOf('EL Math')).toBeLessThan(
       rendered.text.indexOf('MS Lunch'),

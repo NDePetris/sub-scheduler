@@ -128,6 +128,40 @@ export interface PlanAssignment {
     readonly staffId: string;
     readonly staffName: string;
   }[];
+  readonly sharedDutyStaffing: {
+    readonly capacity: number;
+    readonly vacantPositions: number;
+    readonly filledReplacementPositions: number;
+    readonly actualStaff: readonly {
+      readonly id: string;
+      readonly displayName: string;
+      readonly kind: 'scheduled' | 'replacement';
+    }[];
+    readonly positions: readonly {
+      readonly scheduledStaff: {
+        readonly id: string;
+        readonly displayName: string;
+      };
+      readonly absent: boolean;
+      readonly assignmentId: string | null;
+      readonly replacement: {
+        readonly id: string;
+        readonly displayName: string;
+      } | null;
+      readonly segments: readonly {
+        readonly id: string;
+        readonly startTime: string;
+        readonly endTime: string;
+        readonly staffId: string;
+        readonly staffName: string;
+      }[];
+      readonly status:
+        'unresolved' | 'assigned' | 'intentionally_uncovered' | null;
+      readonly resolutionType: string | null;
+      readonly resolutionDetails: unknown;
+      readonly hasExplicitResolution: boolean;
+    }[];
+  } | null;
 }
 
 export interface PlanDetail {
@@ -148,6 +182,7 @@ export interface PlanDetail {
     readonly specialScheduleId: string | null;
     readonly specialScheduleName: string | null;
     readonly status: 'draft' | 'finalized';
+    readonly structuredRevision: number;
     readonly finalizedAt: string | null;
     readonly finalizedBy: string | null;
   };
@@ -193,6 +228,9 @@ export interface PlanDetail {
     readonly generatedHtml: string;
     readonly editedHtml: string;
     readonly generatedAt: string;
+    readonly sourcePlanRevision: number | null;
+    readonly isStale: boolean;
+    readonly isManuallyEdited: boolean;
   } | null;
 }
 

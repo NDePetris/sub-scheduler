@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  affectedNeedDescription,
   assignmentNote,
   assignmentResolutionLabel,
   buildFullScheduleTimeline,
   formatRoomLabel,
+  messageFreshnessState,
   projectOperationalNeeds,
   type FullScheduleTimelineInput,
   type TimelineAssignmentInput,
@@ -27,6 +29,15 @@ describe('Sub Plan presentation helpers', () => {
     );
     expect(formatRoomLabel('Library 2')).toBe('Library 2');
     expect(formatRoomLabel(null)).toBeNull();
+  });
+
+  it('shows the planned room once in compact Affected Only content', () => {
+    expect(affectedNeedDescription('EL Lunch (21)', '21')).toBe('EL Lunch');
+    expect(affectedNeedDescription('EL Lunch (Library)', '21')).toBe(
+      'EL Lunch (Library)',
+    );
+    expect(formatRoomLabel('21')).toBe('Room 21');
+    expect(formatRoomLabel('Room 21')).toBe('Room 21');
   });
 
   it('presents structured alternate resolutions without enum or JSON labels', () => {
@@ -93,11 +104,6 @@ describe('Sub Plan presentation helpers', () => {
       ),
     ).toEqual(['shared-a']);
     expect(
-      projectOperationalNeeds(needs, { search: 'Jordan' }).map(
-        (need) => need.id,
-      ),
-    ).toEqual(['shared-a']);
-    expect(
       projectOperationalNeeds(needs, { sort: 'teacher' }).map(
         (need) => need.id,
       ),
@@ -105,6 +111,49 @@ describe('Sub Plan presentation helpers', () => {
     expect(
       projectOperationalNeeds(needs, { sort: 'time' }).map((need) => need.id),
     ).toEqual(['class-c', 'shared-a']);
+  });
+
+  it('uses the two exact primary sort modes with deterministic ties', () => {
+    const needs = [
+      operationalNeed('z', 'Blair', 'blair', 'Zeta', '08:00', {
+        endTime: '08:40',
+        sharedResponsibilityKey: null,
+      }),
+      operationalNeed('b', 'Avery', 'avery', 'Beta', '08:00', {
+        endTime: '08:50',
+        sharedResponsibilityKey: null,
+      }),
+      operationalNeed('a', 'Avery', 'avery-2', 'Alpha', '08:00', {
+        endTime: '08:50',
+        sharedResponsibilityKey: null,
+      }),
+      operationalNeed('later', 'Avery', 'avery-3', 'Later', '09:00', {
+        endTime: '09:30',
+        sharedResponsibilityKey: null,
+      }),
+    ];
+
+    expect(
+      projectOperationalNeeds(needs, { sort: 'time' }).map((need) => need.id),
+    ).toEqual(['a', 'b', 'z', 'later']);
+    expect(
+      projectOperationalNeeds(needs, { sort: 'teacher' }).map(
+        (need) => need.id,
+      ),
+    ).toEqual(['a', 'b', 'later', 'z']);
+  });
+
+  it('classifies generated-message freshness without timestamps', () => {
+    expect(messageFreshnessState(null)).toBe('missing');
+    expect(
+      messageFreshnessState({ isStale: false, isManuallyEdited: true }),
+    ).toBe('fresh');
+    expect(
+      messageFreshnessState({ isStale: true, isManuallyEdited: false }),
+    ).toBe('stale_unedited');
+    expect(
+      messageFreshnessState({ isStale: true, isManuallyEdited: true }),
+    ).toBe('stale_edited');
   });
 });
 

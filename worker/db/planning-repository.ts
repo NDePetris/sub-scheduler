@@ -29,6 +29,7 @@ interface PlanRow {
   schedule_version_id: string | null;
   special_schedule_id: string | null;
   status: 'draft' | 'finalized';
+  structured_revision: number;
   finalized_at: string | null;
   finalized_by: string | null;
   schedule_name: string | null;
@@ -155,6 +156,7 @@ interface MessageRow {
   generated_at: string;
   generated_html: string | null;
   edited_html: string | null;
+  source_plan_revision: number | null;
 }
 
 interface WorkloadCoverageRow {
@@ -368,6 +370,7 @@ export class PlanningRepository {
           staffId: segment.staff_id,
           staffName: segment.staff_name,
         })),
+        sharedDutyStaffing: projected?.staffing ?? null,
       };
     });
     const operationalAssignments = operationalAssignmentRows(assignmentDtos);
@@ -422,6 +425,7 @@ export class PlanningRepository {
         specialScheduleId: plan.special_schedule_id,
         specialScheduleName: plan.special_schedule_name,
         status: plan.status,
+        structuredRevision: plan.structured_revision,
         finalizedAt: plan.finalized_at,
         finalizedBy: plan.finalized_by,
       },
@@ -476,6 +480,12 @@ export class PlanningRepository {
             editedHtml:
               message.edited_html ?? plainTextToHtml(message.edited_text),
             generatedAt: message.generated_at,
+            sourcePlanRevision: message.source_plan_revision,
+            isStale: message.source_plan_revision !== plan.structured_revision,
+            isManuallyEdited:
+              (message.edited_html ?? plainTextToHtml(message.edited_text)) !==
+              (message.generated_html ??
+                plainTextToHtml(message.generated_text)),
           }
         : null,
     };
@@ -520,6 +530,7 @@ export class PlanningRepository {
       );
     }
     const absenceId = crypto.randomUUID();
+    const revisionTime = new Date().toISOString();
     const statements: D1PreparedStatement[] = [
       this.db
         .prepare(
@@ -677,6 +688,13 @@ export class PlanningRepository {
             ),
         );
       }
+      statements.push(
+        this.structuredRevisionStatement(
+          planSeed.plan.id,
+          actorId,
+          revisionTime,
+        ),
+      );
     }
     await this.db.batch(statements);
     return { absenceId, dates };
@@ -739,11 +757,7 @@ export class PlanningRepository {
       );
     }
 
-    const statements: D1PreparedStatement[] = affectedPlans.map((plan) =>
-      this.db
-        .prepare('DELETE FROM generated_messages WHERE daily_sub_plan_id = ?')
-        .bind(plan.id),
-    );
+    const statements: D1PreparedStatement[] = [];
     if (scope === 'entire_block') {
       statements.push(
         this.db
@@ -823,6 +837,12 @@ export class PlanningRepository {
             .bind(shiftSchoolDate(currentDate, -1), actorId, absence.id),
         );
       }
+    }
+    const revisionTime = new Date().toISOString();
+    for (const plan of affectedPlans) {
+      statements.push(
+        this.structuredRevisionStatement(plan.id, actorId, revisionTime),
+      );
     }
     await this.db.batch(statements);
     return this.getPlan(currentDate);
@@ -1077,6 +1097,13 @@ export class PlanningRepository {
           ),
       );
     });
+    statements.push(
+      this.structuredRevisionStatement(
+        assignment.daily_sub_plan_id,
+        actorId,
+        now,
+      ),
+    );
     await this.db.batch(statements);
     return this.getPlan(plan.date);
   }
@@ -1106,6 +1133,38 @@ export class PlanningRepository {
     }
     const assignment = await this.assignmentById(assignmentId);
     await this.assertDraft(assignment.daily_sub_plan_id);
+    if (assignment.shared_responsibility_key) {
+      const duplicate = await this.db
+        .prepare(
+          `SELECT COUNT(*) AS count
+             FROM assignments sibling
+            WHERE sibling.daily_sub_plan_id = ?
+              AND sibling.shared_responsibility_key = ?
+              AND sibling.id <> ?
+              AND (
+                sibling.assigned_staff_id = ? OR EXISTS (
+                  SELECT 1 FROM assignment_segments segment
+                   WHERE segment.assignment_id = sibling.id
+                     AND segment.staff_id = ?
+                )
+              )`,
+        )
+        .bind(
+          assignment.daily_sub_plan_id,
+          assignment.shared_responsibility_key,
+          assignment.id,
+          staffId,
+          staffId,
+        )
+        .first<CountRow>();
+      if ((duplicate?.count ?? 0) > 0) {
+        throw new HttpError(
+          409,
+          'shared_duty_staff_already_assigned',
+          'Choose a different person for this shared-duty staffing position.',
+        );
+      }
+    }
     const noteDetailsJson = noteOnlyDetailsJson(
       assignment.resolution_details_json,
     );
@@ -1138,6 +1197,11 @@ export class PlanningRepository {
           now,
           assignmentId,
         ),
+      this.structuredRevisionStatement(
+        assignment.daily_sub_plan_id,
+        actorId,
+        now,
+      ),
     ]);
     return this.getPlan(
       (await this.planById(assignment.daily_sub_plan_id)).date,
@@ -1147,25 +1211,30 @@ export class PlanningRepository {
   async clearResolution(assignmentId: string, actorId: string) {
     const assignment = await this.assignmentById(assignmentId);
     await this.assertDraft(assignment.daily_sub_plan_id);
-    const targets = assignment.shared_responsibility_key
-      ? (
-          await this.db
-            .prepare(
-              `SELECT id, resolution_details_json FROM assignments
+    const legacyExplicitSolo =
+      assignment.resolution_type === 'solo_coverage' &&
+      typeof detailsRecord(assignment.resolution_details_json).soloKind ===
+        'string';
+    const targets =
+      legacyExplicitSolo && assignment.shared_responsibility_key
+        ? (
+            await this.db
+              .prepare(
+                `SELECT id, resolution_details_json FROM assignments
                 WHERE daily_sub_plan_id = ? AND shared_responsibility_key = ?`,
-            )
-            .bind(
-              assignment.daily_sub_plan_id,
-              assignment.shared_responsibility_key,
-            )
-            .all<{ id: string; resolution_details_json: string | null }>()
-        ).results
-      : [
-          {
-            id: assignment.id,
-            resolution_details_json: assignment.resolution_details_json,
-          },
-        ];
+              )
+              .bind(
+                assignment.daily_sub_plan_id,
+                assignment.shared_responsibility_key,
+              )
+              .all<{ id: string; resolution_details_json: string | null }>()
+          ).results
+        : [
+            {
+              id: assignment.id,
+              resolution_details_json: assignment.resolution_details_json,
+            },
+          ];
     const now = new Date().toISOString();
     const statements: D1PreparedStatement[] = [];
     for (const target of targets) {
@@ -1179,6 +1248,7 @@ export class PlanningRepository {
                 SET assigned_staff_id = NULL, resolution_type = NULL,
                     resolution_details_json = ?, status = 'unresolved',
                     is_default = 0, conflict_explanation = NULL,
+                    counts_toward_workload = 1,
                     override_acknowledged_at = NULL,
                     override_acknowledged_by = NULL, updated_by = ?, updated_at = ?
               WHERE id = ?`,
@@ -1191,6 +1261,13 @@ export class PlanningRepository {
           ),
       );
     }
+    statements.push(
+      this.structuredRevisionStatement(
+        assignment.daily_sub_plan_id,
+        actorId,
+        now,
+      ),
+    );
     await this.db.batch(statements);
     const plan = await this.planById(assignment.daily_sub_plan_id);
     return this.getPlan(plan.date);
@@ -1304,7 +1381,10 @@ export class PlanningRepository {
       };
       result.changed += 1;
     }
-    if (statements.length) await this.db.batch(statements);
+    if (statements.length) {
+      statements.push(this.structuredRevisionStatement(plan.id, actorId, now));
+      await this.db.batch(statements);
+    }
     return { detail: await this.getPlan(plan.date), result };
   }
 
@@ -1391,7 +1471,10 @@ export class PlanningRepository {
           ),
       );
     }
-    if (statements.length) await this.db.batch(statements);
+    if (statements.length) {
+      statements.push(this.structuredRevisionStatement(plan.id, actorId, now));
+      await this.db.batch(statements);
+    }
     return { detail: await this.getPlan(plan.date), result };
   }
 
@@ -1436,6 +1519,11 @@ export class PlanningRepository {
           now,
           assignmentId,
         ),
+      this.structuredRevisionStatement(
+        assignment.daily_sub_plan_id,
+        actorId,
+        now,
+      ),
     ]);
     return this.getPlan(
       (await this.planById(assignment.daily_sub_plan_id)).date,
@@ -1468,6 +1556,7 @@ export class PlanningRepository {
           .bind(actorId, now, assignment.id),
       );
     }
+    statements.push(this.structuredRevisionStatement(plan.id, actorId, now));
     await this.db.batch(statements);
     return this.getPlan(plan.date);
   }
@@ -1565,6 +1654,11 @@ export class PlanningRepository {
           now,
           assignmentId,
         ),
+      this.structuredRevisionStatement(
+        assignment.daily_sub_plan_id,
+        actorId,
+        now,
+      ),
     ]);
     return this.getPlan(plan.date);
   }
@@ -1671,6 +1765,11 @@ export class PlanningRepository {
           now,
           assignmentId,
         ),
+      this.structuredRevisionStatement(
+        assignment.daily_sub_plan_id,
+        actorId,
+        now,
+      ),
     ]);
     return this.getPlan(plan.date);
   }
@@ -1694,20 +1793,26 @@ export class PlanningRepository {
       : {};
     const details = compactDetails({ ...currentDetails, note });
     const now = new Date().toISOString();
-    await this.db
-      .prepare(
-        `UPDATE assignments
-            SET room_id = ?, resolution_details_json = ?, updated_by = ?, updated_at = ?
-          WHERE id = ?`,
-      )
-      .bind(
-        plannedRoomId,
-        Object.keys(details).length > 0 ? JSON.stringify(details) : null,
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE assignments
+              SET room_id = ?, resolution_details_json = ?, updated_by = ?, updated_at = ?
+            WHERE id = ?`,
+        )
+        .bind(
+          plannedRoomId,
+          Object.keys(details).length > 0 ? JSON.stringify(details) : null,
+          actorId,
+          now,
+          assignmentId,
+        ),
+      this.structuredRevisionStatement(
+        assignment.daily_sub_plan_id,
         actorId,
         now,
-        assignmentId,
-      )
-      .run();
+      ),
+    ]);
     return this.getPlan(plan.date);
   }
 
@@ -1820,6 +1925,11 @@ export class PlanningRepository {
           now,
           assignmentId,
         ),
+      this.structuredRevisionStatement(
+        assignment.daily_sub_plan_id,
+        actorId,
+        now,
+      ),
     );
     await this.db.batch(statements);
     return this.getPlan(plan.date);
@@ -1852,8 +1962,9 @@ export class PlanningRepository {
     await this.db
       .prepare(
         `INSERT INTO generated_messages
-           (id, daily_sub_plan_id, generated_text, edited_text, generated_html, edited_html, generated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (id, daily_sub_plan_id, generated_text, edited_text, generated_html,
+            edited_html, generated_by, source_plan_revision)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         crypto.randomUUID(),
@@ -1863,6 +1974,7 @@ export class PlanningRepository {
         rendered.html,
         rendered.html,
         actorId,
+        detail.plan.structuredRevision,
       )
       .run();
     return this.getPlan(date);
@@ -1917,6 +2029,20 @@ export class PlanningRepository {
           409,
           'unresolved_assignments',
           'Resolve all Assignments before finalizing.',
+        );
+      }
+      if (!detail.message) {
+        throw new HttpError(
+          409,
+          'message_not_generated',
+          'Generate the current Sub Plan message before finalizing.',
+        );
+      }
+      if (detail.message.isStale) {
+        throw new HttpError(
+          409,
+          'stale_generated_message',
+          'Regenerate the message from the current Sub Plan before finalizing.',
         );
       }
       await this.db
@@ -2450,6 +2576,7 @@ export class PlanningRepository {
         schedule_version_id: resolved.normal?.id ?? null,
         special_schedule_id: resolved.special?.id ?? null,
         status: 'draft',
+        structured_revision: 0,
         finalized_at: null,
         finalized_by: null,
         schedule_name: resolved.normal?.name ?? null,
@@ -2556,7 +2683,8 @@ export class PlanningRepository {
     return this.db
       .prepare(
         `SELECT p.id, p.date, p.day_type, p.schedule_version_id,
-                p.special_schedule_id, p.status, p.finalized_at, p.finalized_by,
+                p.special_schedule_id, p.status, p.structured_revision,
+                p.finalized_at, p.finalized_by,
                 sv.name AS schedule_name, ss.name AS special_schedule_name,
                 sv.effective_from,
                 c.expected_day_type AS calendar_expected_day_type,
@@ -2578,7 +2706,8 @@ export class PlanningRepository {
     const row = await this.db
       .prepare(
         `SELECT p.id, p.date, p.day_type, p.schedule_version_id,
-                p.special_schedule_id, p.status, p.finalized_at, p.finalized_by,
+                p.special_schedule_id, p.status, p.structured_revision,
+                p.finalized_at, p.finalized_by,
                 sv.name AS schedule_name, ss.name AS special_schedule_name,
                 sv.effective_from,
                 c.expected_day_type AS calendar_expected_day_type,
@@ -2767,9 +2896,10 @@ export class PlanningRepository {
   private async latestMessage(planId: string): Promise<MessageRow | null> {
     return this.db
       .prepare(
-        `SELECT id, generated_text, edited_text, generated_at, generated_html, edited_html
+        `SELECT id, generated_text, edited_text, generated_at, generated_html,
+                edited_html, source_plan_revision
            FROM generated_messages WHERE daily_sub_plan_id = ?
-          ORDER BY generated_at DESC, id DESC LIMIT 1`,
+          ORDER BY generated_at DESC, rowid DESC LIMIT 1`,
       )
       .bind(planId)
       .first<MessageRow>();
@@ -2787,6 +2917,21 @@ export class PlanningRepository {
         'Reopen the finalized Sub Plan before editing it.',
       );
     }
+  }
+
+  private structuredRevisionStatement(
+    planId: string,
+    actorId: string,
+    now: string,
+  ): D1PreparedStatement {
+    return this.db
+      .prepare(
+        `UPDATE daily_sub_plans
+            SET structured_revision = structured_revision + 1,
+                updated_by = ?, updated_at = ?
+          WHERE id = ?`,
+      )
+      .bind(actorId, now, planId);
   }
 }
 
@@ -2973,6 +3118,7 @@ function projectSharedDutyStaffing(
     resolved: boolean;
     solo: boolean;
     staff: { id: string; displayName: string } | null;
+    staffing: SharedDutyStaffingProjection;
   }
 > {
   const result = new Map<
@@ -2981,6 +3127,7 @@ function projectSharedDutyStaffing(
       resolved: boolean;
       solo: boolean;
       staff: { id: string; displayName: string } | null;
+      staffing: SharedDutyStaffingProjection;
     }
   >();
   const segmentsByAssignment = new Map<string, SegmentRow[]>();
@@ -2997,7 +3144,10 @@ function projectSharedDutyStaffing(
     groups.set(assignment.shared_responsibility_key, list);
   }
   for (const [key, siblings] of groups) {
-    const staffing = new Map<string, string>();
+    const staffing = new Map<
+      string,
+      { id: string; displayName: string; kind: 'scheduled' | 'replacement' }
+    >();
     const interval = siblings[0];
     if (!interval) continue;
     for (const entry of entries) {
@@ -3012,30 +3162,139 @@ function projectSharedDutyStaffing(
             interval.end_time,
           ),
       );
-      if (!absent) staffing.set(entry.staff_id, entry.staff_name);
+      if (!absent)
+        staffing.set(entry.staff_id, {
+          id: entry.staff_id,
+          displayName: entry.staff_name,
+          kind: 'scheduled',
+        });
     }
     for (const sibling of siblings) {
       if (sibling.status === 'assigned' && sibling.assigned_staff_id)
-        staffing.set(
-          sibling.assigned_staff_id,
-          sibling.assigned_staff_name ?? '',
-        );
+        staffing.set(sibling.assigned_staff_id, {
+          id: sibling.assigned_staff_id,
+          displayName: sibling.assigned_staff_name ?? '',
+          kind: 'replacement',
+        });
       for (const segment of segmentsByAssignment.get(sibling.id) ?? [])
-        staffing.set(segment.staff_id, segment.staff_name);
+        staffing.set(segment.staff_id, {
+          id: segment.staff_id,
+          displayName: segment.staff_name,
+          kind: 'replacement',
+        });
     }
-    const people = [...staffing].map(([id, displayName]) => ({
-      id,
-      displayName,
-    }));
+    const people = [...staffing.values()];
+    const sourceEntries = entries
+      .filter((entry) => sharedResponsibilityKeyForEntry(entry, plan) === key)
+      .sort(
+        (left, right) =>
+          left.staff_name.localeCompare(right.staff_name) ||
+          left.staff_id.localeCompare(right.staff_id),
+      );
+    const positions = sourceEntries.map((entry) => {
+      const absent = absences.some(
+        (absence) =>
+          absence.staff_id === entry.staff_id &&
+          timeRangesOverlap(
+            absence.start_time,
+            absence.end_time,
+            interval.start_time,
+            interval.end_time,
+          ),
+      );
+      const sibling = siblings.find((item) => {
+        const sourceId = plan.special_schedule_id
+          ? item.source_special_schedule_entry_id
+          : item.source_schedule_entry_id;
+        return sourceId === entry.id;
+      });
+      const siblingSegments = sibling
+        ? (segmentsByAssignment.get(sibling.id) ?? [])
+        : [];
+      return {
+        scheduledStaff: { id: entry.staff_id, displayName: entry.staff_name },
+        absent,
+        assignmentId: sibling?.id ?? null,
+        replacement: sibling?.assigned_staff_id
+          ? {
+              id: sibling.assigned_staff_id,
+              displayName: sibling.assigned_staff_name ?? '',
+            }
+          : null,
+        segments: siblingSegments.map((segment) => ({
+          id: segment.id,
+          startTime: segment.start_time,
+          endTime: segment.end_time,
+          staffId: segment.staff_id,
+          staffName: segment.staff_name,
+        })),
+        status: sibling?.status ?? null,
+        resolutionType: sibling?.resolution_type ?? null,
+        resolutionDetails: parseJson(sibling?.resolution_details_json ?? null),
+        hasExplicitResolution: Boolean(
+          sibling &&
+          (sibling.assigned_staff_id ||
+            siblingSegments.length > 0 ||
+            sibling.resolution_type ||
+            sibling.status !== 'unresolved'),
+        ),
+      };
+    });
+    const projectedStaffing: SharedDutyStaffingProjection = {
+      capacity: sourceEntries.length,
+      vacantPositions: positions.filter((position) => position.absent).length,
+      filledReplacementPositions: positions.filter(
+        (position) =>
+          position.absent &&
+          (position.replacement || position.segments.length > 0),
+      ).length,
+      actualStaff: people,
+      positions,
+    };
     for (const sibling of siblings) {
       result.set(sibling.id, {
         resolved: people.length > 0,
         solo: people.length === 1,
         staff: people.length === 1 ? (people[0] ?? null) : null,
+        staffing: projectedStaffing,
       });
     }
   }
   return result;
+}
+
+interface SharedDutyStaffingProjection {
+  readonly capacity: number;
+  readonly vacantPositions: number;
+  readonly filledReplacementPositions: number;
+  readonly actualStaff: readonly {
+    readonly id: string;
+    readonly displayName: string;
+    readonly kind: 'scheduled' | 'replacement';
+  }[];
+  readonly positions: readonly {
+    readonly scheduledStaff: {
+      readonly id: string;
+      readonly displayName: string;
+    };
+    readonly absent: boolean;
+    readonly assignmentId: string | null;
+    readonly replacement: {
+      readonly id: string;
+      readonly displayName: string;
+    } | null;
+    readonly segments: readonly {
+      readonly id: string;
+      readonly startTime: string;
+      readonly endTime: string;
+      readonly staffId: string;
+      readonly staffName: string;
+    }[];
+    readonly status: AssignmentRow['status'] | null;
+    readonly resolutionType: string | null;
+    readonly resolutionDetails: unknown;
+    readonly hasExplicitResolution: boolean;
+  }[];
 }
 
 function coverageConflicts(
@@ -3449,11 +3708,22 @@ function resolutionLabel(
 }
 
 function messageResolution(
-  assignment: Parameters<typeof legacyResolutionLabel>[0],
+  assignment: Parameters<typeof legacyResolutionLabel>[0] & {
+    readonly sharedDutyStaffing?: SharedDutyStaffingProjection | null;
+  },
 ) {
   const details = unknownRecord(assignment.resolutionDetails);
   const note = stringDetail(details, 'note');
   const suffix = note ? ` Note: ${note}` : '';
+  if (assignment.sharedDutyStaffing?.actualStaff.length) {
+    return {
+      kind: 'shared' as const,
+      staffNames: assignment.sharedDutyStaffing.actualStaff.map(
+        (staff) => staff.displayName,
+      ),
+      solo: assignment.sharedDutyStaffing.actualStaff.length === 1,
+    };
+  }
   if (assignment.status === 'intentionally_uncovered')
     return {
       kind: 'structured' as const,

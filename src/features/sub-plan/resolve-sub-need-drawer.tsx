@@ -21,9 +21,10 @@ import {
   type RoomData,
   type StaffData,
 } from '@/lib/api';
+import { cn } from '@/lib/cn';
 
 export function ResolveSubNeedDrawer({
-  assignment,
+  assignment: initialAssignment,
   detail,
   staff,
   onClose,
@@ -35,8 +36,20 @@ export function ResolveSubNeedDrawer({
   readonly onClose: () => void;
   readonly onChange: (detail: PlanDetail) => void;
 }) {
+  const [activeAssignmentId, setActiveAssignmentId] = useState(
+    () =>
+      initialAssignment.sharedDutyStaffing?.positions.find(
+        (position) =>
+          position.absent &&
+          position.assignmentId &&
+          !position.hasExplicitResolution,
+      )?.assignmentId ?? initialAssignment.id,
+  );
+  const assignment =
+    detail.assignments.find((item) => item.id === activeAssignmentId) ??
+    initialAssignment;
   const [candidates, setCandidates] = useState<CandidatePreview[]>([]);
-  const [candidatesLoading, setCandidatesLoading] = useState(true);
+  const [candidateAssignmentId, setCandidateAssignmentId] = useState('');
   const [candidateError, setCandidateError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -69,14 +82,16 @@ export function ResolveSubNeedDrawer({
   useEffect(() => {
     const controller = new AbortController();
     void getCandidates(assignment.id, { signal: controller.signal })
-      .then(setCandidates)
+      .then((values) => {
+        setCandidates(values);
+        setCandidateAssignmentId(assignment.id);
+        setCandidateError(null);
+      })
       .catch((cause: unknown) => {
         if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
           setCandidateError(errorMessage(cause));
+          setCandidateAssignmentId(assignment.id);
         }
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setCandidatesLoading(false);
       });
     return () => controller.abort();
   }, [assignment.id]);
@@ -121,6 +136,7 @@ export function ResolveSubNeedDrawer({
     });
   }, [candidates, otherStaffSearch]);
   const otherStaffCount = candidates.length - recommended.length;
+  const candidatesLoading = candidateAssignmentId !== assignment.id;
 
   const concurrentCombineEntries = useMemo(() => {
     const activeStaffIds = new Set(staff.map((person) => person.id));
@@ -135,12 +151,42 @@ export function ResolveSubNeedDrawer({
     );
   }, [assignment, detail, staff]);
 
-  async function act(input: AssignmentResolutionInput) {
+  function selectAssignment(
+    assignmentId: string,
+    sourceDetail: PlanDetail = detail,
+  ) {
+    const next = sourceDetail.assignments.find(
+      (item) => item.id === assignmentId,
+    );
+    if (!next) return;
+    setRoomId(next.roomId === next.scheduledRoomId ? '' : (next.roomId ?? ''));
+    setNote(assignmentNote(next.resolutionDetails) ?? '');
+    setActiveAssignmentId(assignmentId);
+  }
+
+  async function act(
+    input: AssignmentResolutionInput,
+    targetAssignmentId = assignment.id,
+  ) {
     setBusy(true);
     setActionError(null);
     setPendingOverride(null);
     try {
-      onChange(await resolveAssignment(assignment.id, input));
+      const nextDetail = await resolveAssignment(targetAssignmentId, input);
+      onChange(nextDetail);
+      if (input.action !== 'clear_resolution') {
+        const updated = nextDetail.assignments.find(
+          (item) => item.id === targetAssignmentId,
+        );
+        const nextVacancy = updated?.sharedDutyStaffing?.positions.find(
+          (position) =>
+            position.absent &&
+            position.assignmentId &&
+            !position.hasExplicitResolution,
+        );
+        if (nextVacancy?.assignmentId)
+          selectAssignment(nextVacancy.assignmentId, nextDetail);
+      }
     } catch (cause) {
       setActionError(errorMessage(cause));
       if (
@@ -254,7 +300,17 @@ export function ResolveSubNeedDrawer({
             </div>
           </section>
 
-          {assignment.status !== 'unresolved' && (
+          {assignment.sharedDutyStaffing ? (
+            <SharedDutyStaffing
+              staffing={assignment.sharedDutyStaffing}
+              activeAssignmentId={assignment.id}
+              busy={busy}
+              onSelect={selectAssignment}
+              onClear={(assignmentId) =>
+                void act({ action: 'clear_resolution' }, assignmentId)
+              }
+            />
+          ) : assignment.status !== 'unresolved' ? (
             <div className="space-y-2">
               <CurrentChoice assignment={assignment} />
               {hasPrimaryResolution(assignment) && (
@@ -270,13 +326,23 @@ export function ResolveSubNeedDrawer({
                 </div>
               )}
             </div>
-          )}
+          ) : null}
 
           <section aria-labelledby="assign-a-sub-title">
             <div>
               <h3 id="assign-a-sub-title" className="text-base font-bold">
                 Assign a Sub
               </h3>
+              {assignment.sharedDutyStaffing && (
+                <p className="text-foreground mt-0.5 text-xs font-semibold">
+                  Replacement position for{' '}
+                  {
+                    assignment.sharedDutyStaffing.positions.find(
+                      (position) => position.assignmentId === assignment.id,
+                    )?.scheduledStaff.displayName
+                  }
+                </p>
+              )}
               <p className="text-muted-foreground mt-0.5 text-xs">
                 Recommended staff are automatically available and ordered by
                 preference, then recent Plan Periods Lost.
@@ -1488,6 +1554,129 @@ function currentAssignmentLabel(assignment: PlanAssignment): string {
   if (assignment.resolutionType)
     return assignment.resolutionType.replaceAll('_', ' ');
   return 'Unresolved';
+}
+
+function SharedDutyStaffing({
+  staffing,
+  activeAssignmentId,
+  busy,
+  onSelect,
+  onClear,
+}: {
+  readonly staffing: NonNullable<PlanAssignment['sharedDutyStaffing']>;
+  readonly activeAssignmentId: string;
+  readonly busy: boolean;
+  readonly onSelect: (assignmentId: string) => void;
+  readonly onClear: (assignmentId: string) => void;
+}) {
+  const vacancies = staffing.positions.filter(
+    (position) => position.absent && position.assignmentId,
+  );
+  return (
+    <section>
+      <h3 className="text-muted-foreground text-xs font-bold tracking-wide uppercase">
+        Currently Chosen
+      </h3>
+      <div className="border-border mt-2 space-y-3 rounded-md border p-3 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="font-bold">Shared duty staffing</p>
+          {staffing.actualStaff.length === 1 && (
+            <Badge className="border-warning/30 bg-warning-soft text-warning-dark">
+              Solo (derived)
+            </Badge>
+          )}
+        </div>
+        <div>
+          <p className="text-muted-foreground text-xs font-bold">Scheduled</p>
+          <ul className="mt-1 space-y-1">
+            {staffing.positions.map((position) => (
+              <li
+                key={position.scheduledStaff.id}
+                className="flex items-center justify-between gap-3"
+              >
+                <span>{position.scheduledStaff.displayName}</span>
+                <span
+                  className={cn(
+                    'text-xs font-semibold',
+                    position.absent ? 'text-danger-dark' : 'text-brand-dark',
+                  )}
+                >
+                  {position.absent ? 'Absent' : 'Present'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <p className="text-muted-foreground text-xs font-bold">
+            Replacement coverage
+          </p>
+          <div className="mt-1 space-y-2">
+            {vacancies.map((position, index) => {
+              const assignmentId = position.assignmentId!;
+              return (
+                <div
+                  key={assignmentId}
+                  className={cn(
+                    'border-border rounded-md border p-2',
+                    assignmentId === activeAssignmentId &&
+                      'border-brand bg-brand-soft/40',
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={() => onSelect(assignmentId)}
+                      className="min-w-0 text-left"
+                      aria-pressed={assignmentId === activeAssignmentId}
+                    >
+                      <span className="block text-xs font-bold">
+                        Position {index + 1}: {sharedPositionChoice(position)}
+                      </span>
+                      <span className="text-muted-foreground block truncate text-[11px]">
+                        Vacated by {position.scheduledStaff.displayName}
+                      </span>
+                    </button>
+                    {position.hasExplicitResolution && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => onClear(assignmentId)}
+                      >
+                        Clear Resolution
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <p className="text-muted-foreground text-xs">
+          {staffing.filledReplacementPositions} of {staffing.vacantPositions}{' '}
+          vacant staffing position(s) have replacement coverage. The duty may
+          still proceed with one actual staffer as derived Solo.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function sharedPositionChoice(
+  position: NonNullable<
+    PlanAssignment['sharedDutyStaffing']
+  >['positions'][number],
+): string {
+  if (position.replacement) return position.replacement.displayName;
+  if (position.segments.length > 0)
+    return `Split — ${position.segments
+      .map((segment) => segment.staffName)
+      .join(' / ')}`;
+  if (position.status === 'intentionally_uncovered') return 'Not Covered';
+  if (position.resolutionType === 'combine_class') return 'Combined Class';
+  if (position.resolutionType === 'redistribution') return 'Redistribution';
+  return 'Unassigned';
 }
 
 function CurrentChoice({
