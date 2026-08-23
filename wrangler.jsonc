@@ -15,4 +15,22 @@
       "migrations_dir": "migrations",
     },
   ],
+
+  "env": {
+    "production": {
+      "vars": {
+        "APP_ENV": "production",
+        "CLOUDFLARE_ACCESS_TEAM_DOMAIN": "REPLACE_WITH_YOUR_ACCESS_TEAM_DOMAIN",
+        "CLOUDFLARE_ACCESS_AUD": "REPLACE_WITH_YOUR_ACCESS_APPLICATION_AUD",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "school-sub-planning-production",
+          "database_id": "3943c18d-cbf5-49cb-bc94-65e6a510cd4a",
+          "migrations_dir": "migrations",
+        },
+      ],
+    },
+  },
 }

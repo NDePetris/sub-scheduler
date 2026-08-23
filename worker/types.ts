@@ -2,6 +2,8 @@ export interface Env {
   DB: D1Database;
   APP_ENV?: string;
   DEV_USER_EMAIL?: string;
+  CLOUDFLARE_ACCESS_TEAM_DOMAIN?: string;
+  CLOUDFLARE_ACCESS_AUD?: string;
 }
 
 export interface RequestContext {

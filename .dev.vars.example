@@ -1,4 +1,4 @@
-# Local-only identity adapter. This file is never deployed and .dev.vars is ignored.
+# Local/test-only identity adapter. This file is never deployed and .dev.vars is ignored.
+# Production uses a verified Cloudflare Access JWT and never reads DEV_USER_EMAIL.
 APP_ENV="local"
 DEV_USER_EMAIL="admin@sub-planning.test"
-

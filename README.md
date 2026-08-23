@@ -68,7 +68,23 @@ Open the URL printed by Vite. The Worker verifies the local server-side identity
 
 The seeded fictional schedule remains useful for deterministic Default Sub Plan and conflict testing. Production staff mappings, Default Sub Plans, authentication, school timezone, and School Sub availability require real-school configuration before deployment.
 
-`.dev.vars` is ignored by Git. The local adapter does not trust a browser-supplied email. In any environment other than `local` or `test`, the API fails closed until the future production identity adapter verifies a Cloudflare Access assertion/JWT and then checks the application allowlist.
+`.dev.vars` is ignored by Git. The local adapter does not trust a browser-supplied email.
+
+## Production Cloudflare Access identity
+
+Production uses only the `Cf-Access-Jwt-Assertion` request header supplied by Cloudflare Access. The Worker verifies its RS256 signature against the Access team's rotating JWKS, and requires the configured issuer, Application Audience (AUD) tag, expiration, and email claim. It then looks up that email in `authorized_users`; only active `administrator` records are allowed. Browser-supplied email headers and `DEV_USER_EMAIL` are never trusted in production.
+
+Set these Worker **plain variables** for the `production` environment (they are identifiers, not secrets):
+
+| Variable                        | Value                                                                                                       |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `APP_ENV`                       | `production`                                                                                                |
+| `CLOUDFLARE_ACCESS_TEAM_DOMAIN` | Your Access team domain, for example `school.cloudflareaccess.com` (an `https://` prefix is also accepted). |
+| `CLOUDFLARE_ACCESS_AUD`         | The exact Application Audience (AUD) Tag of this app's Cloudflare Access application.                       |
+
+`wrangler.jsonc` contains intentionally invalid placeholders for the two Access-specific variables. Replace them before deploying, or set the same plain variables in the Cloudflare Workers dashboard for the production environment. Do not set `DEV_USER_EMAIL` in production. No new secret is required.
+
+The Worker assumes a Cloudflare Access self-hosted HTTP application protects the production hostname and has an Allow policy for the intended Google Workspace and any explicitly approved external users. Keep the Worker allowlist (`authorized_users`) in sync with those allowed identities: Access authenticates users, while the app determines who is an administrator.
 
 ## Quality checks
 
@@ -97,9 +113,16 @@ The integration suite applies the real migration and local seed to an isolated i
 
 1. Create separate preview and production D1 databases.
 2. Replace or override the placeholder with the correct environment-specific IDs.
-3. configure verified Cloudflare Access identity plus the application allowlist;
-4. apply migrations deliberately with `wrangler d1 migrations apply <database> --remote`;
-5. build and deploy with `npm run deploy`.
+3. replace the production Access placeholders with the Access team domain and this application's AUD Tag, then configure the matching `authorized_users` allowlist;
+4. apply migrations deliberately with `wrangler d1 migrations apply <database> --remote --env production`;
+5. rebuild and deploy production with:
+
+   ```bash
+   npm install
+   npm run check
+   npx wrangler d1 migrations apply school-sub-planning-production --remote --env production
+   npx wrangler deploy --env production
+   ```
 
 Do not deploy using the local identity adapter or point local/test commands at a remote database. Generate binding types after changing Wrangler configuration with:
 

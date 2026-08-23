@@ -261,7 +261,7 @@ export default {
         );
       }
 
-      const context = await createRequestContext(env, requestId);
+      const context = await createRequestContext(env, request, requestId);
       const importRepository = new ImportRepository(env.DB);
       const planningRepository = new PlanningRepository(env.DB);
       const scheduleRepository = new ScheduleRepository(env.DB);
