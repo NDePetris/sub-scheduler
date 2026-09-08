@@ -1,0 +1,2 @@
+# D1 migrations are executed consistently across developer environments.
+migrations/*.sql text eol=lf

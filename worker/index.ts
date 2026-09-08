@@ -17,6 +17,7 @@ import { CalendarRepository } from './db/calendar-repository';
 import { ImportRepository } from './db/import-repository';
 import { PlanningRepository } from './db/planning-repository';
 import { ScheduleRepository } from './db/schedule-repository';
+import { serializeErrorForLog } from './error-logging';
 import { HttpError, jsonError, jsonSuccess } from './http';
 import { createRequestContext } from './identity';
 import type { Env } from './types';
@@ -944,7 +945,10 @@ export default {
           requestId,
         );
       }
-      console.error('Unhandled API error', { requestId, cause });
+      console.error('Unhandled API error', {
+        requestId,
+        error: serializeErrorForLog(cause),
+      });
       return jsonError(
         new HttpError(
           500,

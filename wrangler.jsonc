@@ -20,8 +20,6 @@
     "production": {
       "vars": {
         "APP_ENV": "production",
-        "CLOUDFLARE_ACCESS_TEAM_DOMAIN": "REPLACE_WITH_YOUR_ACCESS_TEAM_DOMAIN",
-        "CLOUDFLARE_ACCESS_AUD": "REPLACE_WITH_YOUR_ACCESS_APPLICATION_AUD",
       },
       "d1_databases": [
         {
