@@ -36,7 +36,11 @@ Escalate only for a concrete reason:
 - Sol High: unresolved domain semantics, difficult architecture, broad refactor, or
   milestone-level verification where stronger reasoning materially improves correctness.
 
-Do not recommend stronger models merely because the project is important or financial.
+These model names and profiles are current recommendations, not durable project invariants.
+Use the least-powerful model and reasoning level likely to perform the task reliably,
+escalate only for a concrete reason, and update the recommendations as models and
+capabilities change. Do not recommend stronger models merely because the project is
+important.
 For each non-default recommendation, briefly explain why escalation is warranted.
 
 When reviewing a completed coding-agent run, give a qualitative efficiency assessment such
@@ -57,7 +61,7 @@ such as:
 
 Then include only task-specific:
 
-- goal and financial/domain contract;
+- goal and product/domain contract;
 - required behavior;
 - targeted regressions;
 - task-specific validation/reconciliation;
@@ -71,11 +75,15 @@ Default execution strategy:
 - no preliminary subagents for well-specified work;
 - at most one focused final reviewer when justified;
 - targeted tests during development;
-- full suite once at completion;
+- required full repository validation once at successful completion;
 - auto-commit when machine-verifiable;
 - stop before commit when meaningful manual validation is required;
 - no normal commits directly to `main`;
 - no merge unless explicitly requested.
+
+Use targeted tests during implementation. If a late change could invalidate completed
+validation, rerun the affected checks and the full suite as appropriate before declaring
+completion; do not turn this into a full-suite run after every edit.
 
 ## Review standard
 

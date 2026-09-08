@@ -11,7 +11,7 @@ intentionally project-agnostic so it can be copied into other repositories. Repo
 3. Follow this workflow as the default operating model.
 
 When instructions conflict, prefer the more specific and more conservative rule. Do not
-silently weaken privacy, financial/data-integrity, or validation requirements.
+silently weaken privacy, product/data-integrity, or validation requirements.
 
 ## Default execution profile
 
@@ -23,7 +23,7 @@ When these profiles are available in the current Codex environment:
   analytics work with an established contract, and routine repository changes.
 - **Terra High** is appropriate when the task is still bounded but involves difficult
   debugging, multiple interacting code paths, or meaningful ambiguity.
-- **Sol High** is reserved for genuinely difficult architecture, financial/domain-semantic
+- **Sol High** is reserved for genuinely difficult architecture, product/domain-semantic
   decisions, broad refactors, milestone-level verification, or problems where stronger
   reasoning is likely to materially improve correctness.
 - Use a lighter model only for truly mechanical edits where reasoning needs are minimal.
@@ -48,8 +48,9 @@ using a stronger model.
   an existing feature branch.
 - Use a feature/fix/chore branch before editing. Do not make normal development commits
   directly on `main`.
-- If required predecessor work has not been merged to `main`, stop rather than silently
-  stacking unrelated work on an unmerged branch.
+- Do not silently stack unrelated work on an unmerged branch. Normally wait for a required
+  predecessor to merge; intentionally create dependent/stacked work only when explicitly
+  requested or clearly justified, and clearly report the dependency and branch relationship.
 - Keep commits coherent and reviewable.
 - Do not merge to `main` unless the user explicitly asks for the merge.
 - At completion, report branch, commit SHA/message, and working-tree status.
@@ -70,9 +71,10 @@ Subagents are optional tools, not a default ceremony.
 ## Validation strategy
 
 - Run targeted tests while implementing.
-- Run the full repository suite once at the end of a successful implementation.
-- After a discovered defect, rerun the affected focused tests and then the full suite as
-  needed; do not repeatedly run the entire suite after every edit.
+- Run the required full repository validation once at the end of a successful implementation.
+- After a late change that could invalidate completed validation, rerun the affected focused
+  checks and the full suite as appropriate; do not repeatedly run the entire suite after
+  every edit.
 - Run lint/static checks and compilation/type checks required by the repository.
 - Run a diff/whitespace check such as `git diff --check` where applicable.
 - Inspect the final diff and working tree before completion.
@@ -91,13 +93,15 @@ Auto-commit when all of the following are true:
 - no private or user-only validation is required;
 - the final diff contains only intended changes.
 
-Stop before commit and tell the user exactly what to validate when a meaningful manual check
-is required. Common examples include:
+Touching UI does not by itself require stopping before commit. Stop before commit and tell
+the user exactly what to validate only when meaningful evidence cannot adequately be obtained
+through available machine validation. Common examples include:
 
 - changes to ingestion or source-data normalization that depend on real export shape;
-- changes to financial/business classification or other domain semantics that synthetic
+- changes to business classification or other domain semantics that synthetic
   fixtures cannot fully reconcile;
-- UI/runtime changes that require an interactive smoke test;
+- visual/layout behavior requiring human inspection, or complex interactive behavior not
+  covered by available automated tests;
 - environment/deployment behavior that cannot be validated in the agent environment.
 
 After the user reports successful validation, the correction may be committed on the
