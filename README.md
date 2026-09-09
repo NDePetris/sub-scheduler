@@ -2,7 +2,7 @@
 
 School Sub Planning is an internal administrator-facing web application for preparing daily substitute plans at a small K–12 school. The locally usable MVP supports the complete persisted workflow: schedule import and activation, date/A-B selection, absences, generated Needs Sub Assignments, resolution, editable message generation, finalization, and reopening.
 
-The product source of truth is [docs/mvp-spec.md](docs/mvp-spec.md). Implementation boundaries and decisions are recorded in [docs/architecture.md](docs/architecture.md).
+The product source of truth is [docs/mvp-spec.md](docs/mvp-spec.md). Implementation boundaries and decisions are recorded in [docs/architecture.md](docs/architecture.md). Production incident, rollback, migration, and D1 recovery procedures are in [docs/operations.md](docs/operations.md).
 
 ## Prerequisites
 
