@@ -233,6 +233,16 @@ const aliasSchema = z.object({
   displayValue: z.string().trim().min(1).max(120),
 });
 const roomSchema = z.object({ name: z.string().trim().min(1).max(80) });
+const generalSettingsSchema = z
+  .object({
+    schoolName: z.string().trim().min(1).max(120).optional(),
+    workloadWarningThreshold: z.number().finite().positive().optional(),
+    workloadWindowDays: z.number().int().positive().optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: 'Provide at least one setting to update.',
+  });
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -277,6 +287,24 @@ export default {
               email: context.actor.email,
             },
           },
+          requestId,
+        );
+      }
+
+      if (url.pathname === '/api/settings' && request.method === 'GET') {
+        return jsonSuccess(
+          await applicationRepository.getGeneralSettings(),
+          requestId,
+        );
+      }
+
+      if (url.pathname === '/api/settings' && request.method === 'PATCH') {
+        const body = generalSettingsSchema.parse(await readJson(request));
+        return jsonSuccess(
+          await applicationRepository.updateGeneralSettings(
+            body,
+            context.actor.id,
+          ),
           requestId,
         );
       }

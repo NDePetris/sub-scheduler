@@ -9,6 +9,18 @@ interface SettingsRow {
   school_timezone: string;
 }
 
+interface GeneralSettingsRow {
+  school_name: string;
+  workload_warning_threshold: number;
+  workload_window_days: number;
+}
+
+export interface GeneralSettingsInput {
+  readonly schoolName?: string;
+  readonly workloadWarningThreshold?: number;
+  readonly workloadWindowDays?: number;
+}
+
 interface CountRow {
   count: number;
 }
@@ -157,6 +169,40 @@ export class ApplicationRepository {
         },
       },
     };
+  }
+
+  async getGeneralSettings() {
+    const settings = await this.db
+      .prepare(
+        `SELECT school_name, workload_warning_threshold, workload_window_days
+           FROM application_settings
+          WHERE id = 'school'`,
+      )
+      .first<GeneralSettingsRow>();
+    if (!settings)
+      throw new Error('Application settings have not been seeded.');
+    return generalSettingsDto(settings);
+  }
+
+  async updateGeneralSettings(input: GeneralSettingsInput, actorId: string) {
+    await this.db
+      .prepare(
+        `UPDATE application_settings
+            SET school_name = COALESCE(?, school_name),
+                workload_warning_threshold = COALESCE(?, workload_warning_threshold),
+                workload_window_days = COALESCE(?, workload_window_days),
+                updated_by = ?,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE id = 'school'`,
+      )
+      .bind(
+        input.schoolName ?? null,
+        input.workloadWarningThreshold ?? null,
+        input.workloadWindowDays ?? null,
+        actorId,
+      )
+      .run();
+    return this.getGeneralSettings();
   }
 
   async listStaff(includeInactive = false): Promise<StaffSummary[]> {
@@ -539,6 +585,14 @@ function basicStaff(row: StaffRow) {
 
 function roomDto(row: RoomRow) {
   return { id: row.id, name: row.name, isActive: row.is_active === 1 };
+}
+
+function generalSettingsDto(row: GeneralSettingsRow) {
+  return {
+    schoolName: row.school_name,
+    workloadWarningThreshold: row.workload_warning_threshold,
+    workloadWindowDays: row.workload_window_days,
+  };
 }
 
 function roleFromStorage(role: string): StaffRole {
