@@ -11,6 +11,7 @@ const requiredVariables = [
   'CLOUDFLARE_ACCESS_AUD',
 ];
 const dryRun = process.argv.slice(2).includes('--dry-run');
+const deploymentVersion = process.env.DEPLOYMENT_VERSION?.trim();
 const accessVariables = requiredVariables.map((name) => {
   const value = process.env[name]?.trim();
   if (!value || value.startsWith('REPLACE_WITH_')) {
@@ -30,11 +31,14 @@ const deployArguments = [
   'deploy',
   '--config',
   'dist/school_sub_planning/wrangler.json',
-  '--env',
-  'production',
   '--keep-vars',
   ...accessVariables.flatMap(([name, value]) => ['--var', `${name}:${value}`]),
 ];
+// The Vite plugin has already flattened env.production into this generated
+// manifest. Applying --env here would append "-production" a second time.
+if (deploymentVersion) {
+  deployArguments.push('--var', `DEPLOYMENT_VERSION:${deploymentVersion}`);
+}
 if (dryRun) deployArguments.push('--dry-run');
 
 await run(process.execPath, [wranglerCli, ...deployArguments], process.env);
