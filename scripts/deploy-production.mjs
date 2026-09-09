@@ -30,6 +30,8 @@ const deployArguments = [
   'deploy',
   '--config',
   'dist/school_sub_planning/wrangler.json',
+  '--env',
+  'production',
   '--keep-vars',
   ...accessVariables.flatMap(([name, value]) => ['--var', `${name}:${value}`]),
 ];
