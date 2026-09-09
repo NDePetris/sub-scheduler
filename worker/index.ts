@@ -256,6 +256,7 @@ export default {
           {
             status: 'ok',
             database: 'connected',
+            deploymentVersion: env.DEPLOYMENT_VERSION?.trim() || 'unknown',
             timestamp: new Date().toISOString(),
           },
           requestId,

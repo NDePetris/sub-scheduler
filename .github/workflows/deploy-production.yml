@@ -47,9 +47,24 @@ jobs:
         run: npm run lint
 
       - name: Deploy Worker and client assets to production
+        env:
+          DEPLOYMENT_VERSION: ${{ github.sha }}
         run: npm run deploy:production
 
-      - name: Verify production health endpoint
+      - name: Verify the deployed production revision
         env:
           PRODUCTION_HEALTH_URL: ${{ vars.PRODUCTION_HEALTH_URL }}
-        run: curl --fail --silent --show-error --retry 3 --retry-all-errors "$PRODUCTION_HEALTH_URL"
+          EXPECTED_DEPLOYMENT_VERSION: ${{ github.sha }}
+        run: |
+          curl --fail --silent --show-error --retry 3 --retry-all-errors "$PRODUCTION_HEALTH_URL" |
+            node --input-type=module --eval '
+              let response = "";
+              process.stdin.setEncoding("utf8");
+              process.stdin.on("data", (chunk) => { response += chunk; });
+              process.stdin.on("end", () => {
+                const body = JSON.parse(response);
+                if (!body.ok || body.data?.status !== "ok" || body.data?.deploymentVersion !== process.env.EXPECTED_DEPLOYMENT_VERSION) {
+                  throw new Error("Production health endpoint did not report the deployed commit.");
+                }
+              });
+            '

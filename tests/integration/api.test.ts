@@ -10,18 +10,22 @@ describe('Worker and D1 smoke path', () => {
   it('serves D1-backed health information', async () => {
     const response = await worker.fetch(
       new Request('https://app.test/api/health'),
-      testEnv,
+      { ...testEnv, DEPLOYMENT_VERSION: 'test-commit-sha' },
     );
     const body: {
       ok: boolean;
-      data: { status: string; database: string };
+      data: { status: string; database: string; deploymentVersion: string };
     } = await response.json();
 
     expect(response.status).toBe(200);
     expect(response.headers.get('x-request-id')).toBeTruthy();
     expect(body).toMatchObject({
       ok: true,
-      data: { status: 'ok', database: 'connected' },
+      data: {
+        status: 'ok',
+        database: 'connected',
+        deploymentVersion: 'test-commit-sha',
+      },
     });
   });
 
