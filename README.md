@@ -109,22 +109,62 @@ The integration suite applies the real migration and local seed to an isolated i
 
 ## Cloudflare resources and deployment
 
-`wrangler.jsonc` intentionally contains a zero UUID placeholder and the local database name. Before a preview or production deployment:
+The application is one Cloudflare Worker that serves both the Vite-generated client assets and the API. Production D1 is a Worker binding; this is not a Cloudflare Pages deployment.
 
-1. Create separate preview and production D1 databases.
-2. Replace or override the placeholder with the correct environment-specific IDs.
-3. replace the production Access placeholders with the Access team domain and this application's AUD Tag, then configure the matching `authorized_users` allowlist;
-4. apply migrations deliberately with `wrangler d1 migrations apply <database> --remote --env production`;
-5. rebuild and deploy production with:
+`wrangler.jsonc` intentionally contains a zero UUID placeholder and the local database name. Before the first production deployment, create the separate production D1 database, configure the production D1 binding, configure Cloudflare Access and the `authorized_users` allowlist, and set the production Access identifiers described above.
 
-   ```bash
-   npm install
-   npm run check
-   npx wrangler d1 migrations apply school-sub-planning-production --remote --env production
-   npm run deploy:production
-   ```
+### Automatic production deployment
 
-Before deployment, set `$env:CLOUDFLARE_ACCESS_TEAM_DOMAIN` and `$env:CLOUDFLARE_ACCESS_AUD` in PowerShell. Apply production migrations deliberately with `npx wrangler d1 migrations apply school-sub-planning-production --remote --env production` after backup and review; then run `npm run deploy:production`. The deploy command sets the Cloudflare Vite production environment, builds the Worker/client output, and deploys the generated production manifest. It never applies migrations. Use `npm run deploy:production -- --dry-run` for a non-uploading build/configuration check.
+`.github/workflows/deploy-production.yml` runs for every push to `main` and can be manually rerun with **Run workflow**. It checks out that trusted revision, uses Node.js 24, installs the lockfile with `npm ci`, runs tests, TypeScript checks, and ESLint, then runs `npm run deploy:production`.
+
+Deployments use the GitHub `production` environment and are serialized (`cancel-in-progress: false`): a newer push waits for an active deployment to finish instead of interrupting it. The workflow does not run for pull requests and production credentials are available only to the production-environment job.
+
+After Wrangler reports a successful deployment, the workflow requests the configured public `/api/health` URL with retries. This endpoint is deliberately unauthenticated: it runs before request authentication, checks only the D1 connection, and returns a status, database-connection label, timestamp, and request ID—never Access configuration, credentials, or application records. A failed request makes the workflow fail visibly; it does not automatically roll back the deployment.
+
+Create the GitHub `production` environment before enabling this workflow, then configure:
+
+| GitHub configuration | Name                            | Purpose                                                                                                                                                                                 |
+| -------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Environment secret   | `CLOUDFLARE_API_TOKEN`          | Cloudflare API token used by Wrangler.                                                                                                                                                  |
+| Environment secret   | `CLOUDFLARE_ACCOUNT_ID`         | Account ID for the account that owns this Worker.                                                                                                                                       |
+| Environment variable | `CLOUDFLARE_ACCESS_TEAM_DOMAIN` | Production Cloudflare Access team domain.                                                                                                                                               |
+| Environment variable | `CLOUDFLARE_ACCESS_AUD`         | Production Cloudflare Access application AUD tag.                                                                                                                                       |
+| Environment variable | `PRODUCTION_HEALTH_URL`         | Canonical public HTTPS URL ending in `/api/health`; it is separate because the production hostname/custom-domain route is not tracked in `wrangler.jsonc` and cannot be safely derived. |
+
+Create a custom, account-scoped token for this workflow with only **Workers Scripts: Edit** on the production account. The generated deployment manifest has no Worker routes, KV, R2, Secrets Store, or other resource writes, so do not grant Workers Routes, Workers KV Storage, Workers R2 Storage, Workers Tail, Account Settings, user-profile permissions, or any D1 permission. In particular, production deployment must not receive D1 Write/Edit. Cloudflare's **Edit Cloudflare Workers** template is broader than this workflow: it also includes route, KV, R2, Tail, account-settings, and user-read permissions. If starting from that template, remove those unnecessary permissions and restrict the account resource to production; add a zone-scoped Workers Routes permission only if a future deployment manages a Worker route. Keep both token and account ID as GitHub secrets, even though the account ID is not intrinsically secret, to keep the deployment configuration contained in the protected environment.
+
+### Manual deployment
+
+Manual deployment remains a supported fallback. Set `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ACCESS_TEAM_DOMAIN`, and `CLOUDFLARE_ACCESS_AUD` in the shell environment, then run:
+
+```bash
+npm install
+npm run test
+npm run typecheck
+npm run lint
+npm run deploy:production
+```
+
+`npm run deploy:production` sets the Cloudflare Vite production environment, builds the Worker/client output, and deploys the generated production manifest. It never applies migrations. Use `npm run deploy:production -- --dry-run` for a non-uploading build/configuration check.
+
+### Production D1 migrations
+
+Production schema changes are deliberately separate from application deployment. The GitHub deployment workflow never runs `wrangler d1 migrations apply`.
+
+Review the forward-only migration and its deployment order first, back up production data when the migration warrants it, then have an authorized operator apply it explicitly:
+
+```bash
+npx wrangler d1 migrations apply school-sub-planning-production --remote --env production
+```
+
+Confirm the migration result before deploying code that requires the new schema. Do not automatically reverse a migration: code rollback and database rollback are separate operational decisions.
+
+### Production rollback
+
+1. Identify the last known-good Git commit and its successful GitHub Actions/Cloudflare deployment from the workflow history and Cloudflare Worker **Deployments** view.
+2. Prefer Cloudflare's Worker deployment/version rollback to route traffic back to the known-good Worker version when it is compatible with the current D1 schema. Alternatively, manually run the production workflow from the known-good commit (or revert the bad commit to `main`).
+3. Verify `/api/health` and the administrator-critical workflow after rollback.
+4. If a separate D1 migration has already run, do not assume code rollback reverses it. Keep the schema forward-compatible where possible; plan a separately reviewed corrective migration or recovery action if required.
 
 Do not deploy using the local identity adapter or point local/test commands at a remote database. Generate binding types after changing Wrangler configuration with:
 
