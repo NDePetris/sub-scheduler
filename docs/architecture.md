@@ -217,11 +217,12 @@ Store both the most recently generated text and the independently editable text.
 
 ## Deployment and environments
 
-Maintain isolated **local**, **preview**, and **production** configurations:
+The currently deployed topology has isolated **local** and **production** configurations:
 
 - Local: Vite development client, local Worker runtime, local D1 database, fixtures, and a production-disabled development identity path.
-- Preview: deployed Worker/client with preview D1, real authentication configuration, test allowlist, and preview-only storage/settings.
 - Production: independently deployable Worker/client, production D1, school authentication policy, production allowlist, and school settings.
+
+Preview/staging is deliberately deferred in the current pilot. If introduced, it must be a separately deployed Worker/client with its own D1 database, test allowlist, Access configuration, hostname, and synthetic data only; it must never bind to or copy production D1 data.
 
 Bindings and public client variables are typed and environment-specific. Secrets and identity verification configuration stay in Worker/Cloudflare configuration, never in the Vite bundle or repository. Apply migrations deliberately per environment, back up production data before risky migrations, and verify migration version at deployment. Logs should use request/actor IDs where helpful while excluding tokens, raw identity assertions, and sensitive spreadsheet contents.
 
