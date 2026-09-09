@@ -52,7 +52,20 @@ const errorEnvelopeSchema = z.object({
   }),
 });
 
+const generalSettingsSchema = z.object({
+  schoolName: z.string(),
+  workloadWarningThreshold: z.number().finite().positive(),
+  workloadWindowDays: z.number().int().positive(),
+});
+
 export type BootstrapData = z.infer<typeof bootstrapSchema>;
+export type GeneralSettingsData = z.infer<typeof generalSettingsSchema>;
+
+export interface GeneralSettingsUpdate {
+  readonly schoolName?: string;
+  readonly workloadWarningThreshold?: number;
+  readonly workloadWindowDays?: number;
+}
 
 export interface StaffData {
   readonly id: string;
@@ -393,6 +406,22 @@ export async function getBootstrapData(
   }
 
   return successEnvelopeSchema.parse(payload).data;
+}
+
+export async function getGeneralSettings(
+  signal?: AbortSignal,
+): Promise<GeneralSettingsData> {
+  return apiRequest('/api/settings', { signal }, generalSettingsSchema);
+}
+
+export async function updateGeneralSettings(
+  input: GeneralSettingsUpdate,
+): Promise<GeneralSettingsData> {
+  return apiRequest(
+    '/api/settings',
+    { method: 'PATCH', body: JSON.stringify(input) },
+    generalSettingsSchema,
+  );
 }
 
 export async function listStaff(
@@ -898,6 +927,7 @@ export async function archiveSpecialSchedule(
 async function apiRequest<T = unknown>(
   path: string,
   init: RequestInit = {},
+  schema?: z.ZodType<T>,
 ): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('Accept', 'application/json');
@@ -919,7 +949,7 @@ async function apiRequest<T = unknown>(
   if (payload.ok !== true || !('data' in payload)) {
     throw new Error('The application API returned an invalid response.');
   }
-  return payload.data as T;
+  return schema ? schema.parse(payload.data) : (payload.data as T);
 }
 
 export class ApiError extends Error {
