@@ -82,7 +82,7 @@ Set these Worker **plain variables** for the `production` environment (they are 
 | `CLOUDFLARE_ACCESS_TEAM_DOMAIN` | Your Access team domain, for example `school.cloudflareaccess.com` (an `https://` prefix is also accepted). |
 | `CLOUDFLARE_ACCESS_AUD`         | The exact Application Audience (AUD) Tag of this app's Cloudflare Access application.                       |
 
-`wrangler.jsonc` contains intentionally invalid placeholders for the two Access-specific variables. Replace them before deploying, or set the same plain variables in the Cloudflare Workers dashboard for the production environment. Do not set `DEV_USER_EMAIL` in production. No new secret is required.
+Do not set `DEV_USER_EMAIL` in production. Supply the two Access identifiers from the invoking environment; they are plain identifiers, not secrets, and are not committed.
 
 The Worker assumes a Cloudflare Access self-hosted HTTP application protects the production hostname and has an Allow policy for the intended Google Workspace and any explicitly approved external users. Keep the Worker allowlist (`authorized_users`) in sync with those allowed identities: Access authenticates users, while the app determines who is an administrator.
 
@@ -121,8 +121,10 @@ The integration suite applies the real migration and local seed to an isolated i
    npm install
    npm run check
    npx wrangler d1 migrations apply school-sub-planning-production --remote --env production
-   npx wrangler deploy --env production
+   npm run deploy:production
    ```
+
+Before deployment, set `$env:CLOUDFLARE_ACCESS_TEAM_DOMAIN` and `$env:CLOUDFLARE_ACCESS_AUD` in PowerShell. Apply production migrations deliberately with `npx wrangler d1 migrations apply school-sub-planning-production --remote --env production` after backup and review; then run `npm run deploy:production`. The deploy command sets the Cloudflare Vite production environment, builds the Worker/client output, and deploys the generated production manifest. It never applies migrations. Use `npm run deploy:production -- --dry-run` for a non-uploading build/configuration check.
 
 Do not deploy using the local identity adapter or point local/test commands at a remote database. Generate binding types after changing Wrangler configuration with:
 
