@@ -604,6 +604,6 @@ function minutesToLocalTime(value: number): string {
   return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
 }
 
-function roundBurden(value: number): number {
+export function roundBurden(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }

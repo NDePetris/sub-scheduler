@@ -172,4 +172,102 @@ describe('teacher performance reporting API', () => {
       ).response.status,
     ).toBe(403);
   });
+
+  it('returns a reconciled teacher detail report with pinned schedule calculations', async () => {
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(
+        `INSERT INTO schedule_entries
+           (id, schedule_version_id, staff_id, day_type, start_time, end_time,
+            activity_type, category, description, room_id, requires_sub)
+         VALUES
+           ('report_detail_plan', 'schedule_2026_fall', 'report_active_teacher', 'A', '10:00', '10:50', 'plan', 'PLAN_ADMIN', 'PLAN', NULL, 0),
+           ('report_detail_instruction', 'schedule_2026_fall', 'report_active_teacher', 'A', '13:00', '13:50', 'instruction', 'HS', 'Period', NULL, 0)`,
+      ),
+    ]);
+
+    const result = await api(
+      '/api/reports/teacher-performance/report_active_teacher?start=2028-02-07&end=2028-02-09',
+    );
+    expect(result.response.status).toBe(200);
+    const data = (result.payload as { data: Record<string, unknown> }).data;
+    expect(data).toMatchObject({
+      teacher: {
+        staffId: 'report_active_teacher',
+        standardPeriodMinutes: 50,
+        standardPeriodSource: 'historical_schedule',
+      },
+      absenceSummary: {
+        absences: 2,
+        regularFullDayAbsences: 1,
+        blackoutDays: 1,
+        partialAbsences: 1,
+        partialAbsenceMinutes: 120,
+      },
+      coverageSummary: {
+        coverageMinutes: 50,
+        coverageSegments: 2,
+        coveragePeriodEquivalents: 1,
+        planPeriodsLost: 1,
+      },
+    });
+    const coverageDetails = data.coverageDetails as Array<{
+      coverageMinutes: number;
+      coverageSegments: number;
+      entries: unknown[];
+    }>;
+    expect(coverageDetails).toEqual([
+      expect.objectContaining({
+        coverageMinutes: 50,
+        coverageSegments: 2,
+        entries: [expect.any(Object), expect.any(Object)],
+      }),
+    ]);
+    const summary = await api(
+      '/api/reports/teacher-performance?start=2028-02-07&end=2028-02-09',
+    );
+    const summaryRow = (
+      summary.payload as {
+        data: { teachers: Array<Record<string, unknown>> };
+      }
+    ).data.teachers.find(
+      (teacher) => teacher.staffId === 'report_active_teacher',
+    );
+    const absenceSummary = data.absenceSummary as Record<string, unknown>;
+    const coverageSummary = data.coverageSummary as Record<string, unknown>;
+    expect(summaryRow).toMatchObject({
+      absences: absenceSummary.absences,
+      blackoutDays: absenceSummary.blackoutDays,
+      partialAbsences: absenceSummary.partialAbsences,
+      coverageMinutes: coverageSummary.coverageMinutes,
+    });
+  });
+
+  it('rejects unknown, non-Teacher, and School Sub detail targets', async () => {
+    for (const staffId of [
+      'missing_report_teacher',
+      'report_administrator',
+      'report_school_sub',
+    ]) {
+      const result = await api(
+        `/api/reports/teacher-performance/${staffId}?start=2028-02-07&end=2028-02-09`,
+      );
+      expect(result.response.status).toBe(
+        staffId === 'missing_report_teacher' ? 404 : 400,
+      );
+    }
+    expect(
+      (
+        await api(
+          '/api/reports/teacher-performance/report_active_teacher?start=2028-02-30&end=2028-03-01',
+        )
+      ).response.status,
+    ).toBe(400);
+    expect(
+      (
+        await api(
+          '/api/reports/teacher-performance/report_active_teacher?start=2028-02-10&end=2028-02-09',
+        )
+      ).response.status,
+    ).toBe(400);
+  });
 });
