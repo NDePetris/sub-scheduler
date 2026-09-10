@@ -374,6 +374,50 @@ export interface CalendarDateData {
   readonly expectsSpecialSchedule: boolean;
   readonly label: string | null;
 }
+
+export interface CalendarAdministrationDate extends CalendarDateData {
+  readonly sourceType: string;
+  readonly updatedAt: string;
+  readonly updatedBy: string | null;
+  readonly specialSchedule: {
+    readonly id: string;
+    readonly name: string;
+    readonly status: 'draft' | 'active' | 'retired';
+  } | null;
+  readonly specialScheduleExpectedWarning: boolean;
+}
+
+export interface CalendarRangeData {
+  readonly range: { readonly startDate: string; readonly endDate: string };
+  readonly dates: readonly CalendarAdministrationDate[];
+}
+
+export async function getCalendarRange(
+  startDate: string,
+  endDate: string,
+): Promise<CalendarRangeData> {
+  const query = new URLSearchParams({ start: startDate, end: endDate });
+  return apiRequest(`/api/calendar?${query.toString()}`);
+}
+
+export async function saveCalendarDate(
+  date: string,
+  input: Omit<CalendarDateData, 'date'>,
+): Promise<CalendarAdministrationDate> {
+  return (
+    await apiRequest<{ date: CalendarAdministrationDate }>(
+      `/api/calendar/${encodeURIComponent(date)}`,
+      { method: 'PUT', body: JSON.stringify(input) },
+    )
+  ).date;
+}
+
+export async function deleteCalendarDate(date: string): Promise<void> {
+  await apiRequest<{ deleted: true }>(
+    `/api/calendar/${encodeURIComponent(date)}`,
+    { method: 'DELETE' },
+  );
+}
 export async function getTeacherPerformanceReport(
   startDate: string,
   endDate: string,

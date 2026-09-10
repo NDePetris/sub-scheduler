@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+  calendarConfigurationErrors,
   isSchoolDay,
   parseLocalTime,
   parseSchoolDate,
@@ -43,9 +44,8 @@ const timeSchema = z
   .string()
   .refine(isLocalTime, 'Use a valid 24-hour HH:MM time.');
 const dayTypeSchema = z.enum(['A', 'B']);
-const calendarDateSchema = z
+const calendarDateFieldsSchema = z
   .object({
-    date: dateSchema,
     expectedDayType: dayTypeSchema.nullable().default(null),
     isSchoolDay: z.boolean().default(true),
     isBlackoutDay: z.boolean().default(false),
@@ -53,15 +53,39 @@ const calendarDateSchema = z
     label: z.string().trim().max(240).nullable().default(null),
   })
   .superRefine((value, context) => {
-    if (!value.isSchoolDay && value.expectedDayType)
+    for (const message of calendarConfigurationErrors(value))
       context.addIssue({
         code: 'custom',
-        message: 'Non-school dates cannot have an A/B designation.',
+        message,
       });
   });
+const calendarDateSchema = calendarDateFieldsSchema.extend({
+  date: dateSchema,
+});
 const calendarReplaceSchema = z.object({
   records: z.array(calendarDateSchema).max(1000),
 });
+const calendarRangeSchema = z
+  .object({ start: dateSchema, end: dateSchema })
+  .superRefine((value, context) => {
+    if (value.start > value.end) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Start date must not be after end date.',
+      });
+      return;
+    }
+    if (
+      isSchoolDate(value.start) &&
+      isSchoolDate(value.end) &&
+      calendarDateDistance(value.start, value.end) > 370
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Calendar ranges may not exceed 370 days.',
+      });
+    }
+  });
 
 const ensurePlanSchema = z.object({
   date: dateSchema.refine(isSchoolDay, 'Daily Sub Plans require a weekday.'),
@@ -538,6 +562,38 @@ export default {
           { records: await calendarRepository.list(start, end) },
           requestId,
         );
+      }
+      if (url.pathname === '/api/calendar' && request.method === 'GET') {
+        const range = calendarRangeSchema.parse({
+          start: url.searchParams.get('start'),
+          end: url.searchParams.get('end'),
+        });
+        return jsonSuccess(
+          {
+            range: { startDate: range.start, endDate: range.end },
+            dates: await calendarRepository.listRange(range.start, range.end),
+          },
+          requestId,
+        );
+      }
+      const calendarDateMatch = /^\/api\/calendar\/([^/]+)$/.exec(url.pathname);
+      if (calendarDateMatch?.[1] && request.method === 'PUT') {
+        const date = dateSchema.parse(decodeURIComponent(calendarDateMatch[1]));
+        const body = calendarDateFieldsSchema.parse(await readJson(request));
+        return jsonSuccess(
+          {
+            date: await calendarRepository.upsertDate(
+              { date, ...body },
+              context.actor.id,
+            ),
+          },
+          requestId,
+        );
+      }
+      if (calendarDateMatch?.[1] && request.method === 'DELETE') {
+        const date = dateSchema.parse(decodeURIComponent(calendarDateMatch[1]));
+        await calendarRepository.deleteDate(date);
+        return jsonSuccess({ deleted: true }, requestId);
       }
       if (
         url.pathname === '/api/calendar-dates/replace' &&
@@ -1228,6 +1284,16 @@ function isSchoolDate(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function calendarDateDistance(start: string, end: string): number {
+  const startDate = parseSchoolDate(start);
+  const endDate = parseSchoolDate(end);
+  return Math.round(
+    (Date.parse(`${endDate}T00:00:00Z`) -
+      Date.parse(`${startDate}T00:00:00Z`)) /
+      86_400_000,
+  );
 }
 
 function isLocalTime(value: string): boolean {
