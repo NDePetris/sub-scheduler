@@ -56,15 +56,44 @@ jobs:
           PRODUCTION_HEALTH_URL: ${{ vars.PRODUCTION_HEALTH_URL }}
           EXPECTED_DEPLOYMENT_VERSION: ${{ github.sha }}
         run: |
-          curl --fail --silent --show-error --retry 3 --retry-all-errors "$PRODUCTION_HEALTH_URL" |
-            node --input-type=module --eval '
+          retry_interval_seconds=10
+          deadline=$(( $(date +%s) + 180 ))
+          last_observed_version="<no valid health response>"
+
+          echo "Waiting up to 3 minutes for production to report deployment version $EXPECTED_DEPLOYMENT_VERSION."
+          while true; do
+            response="$(curl --fail --silent --show-error --connect-timeout 5 --max-time 10 "$PRODUCTION_HEALTH_URL")" || response=""
+            observed_version="$(printf '%s' "$response" | node --input-type=module --eval '
               let response = "";
               process.stdin.setEncoding("utf8");
               process.stdin.on("data", (chunk) => { response += chunk; });
               process.stdin.on("end", () => {
-                const body = JSON.parse(response);
-                if (!body.ok || body.data?.status !== "ok" || body.data?.deploymentVersion !== process.env.EXPECTED_DEPLOYMENT_VERSION) {
-                  throw new Error("Production health endpoint did not report the deployed commit.");
+                try {
+                  const body = JSON.parse(response);
+                  if (!body.ok || body.data?.status !== "ok" || typeof body.data?.deploymentVersion !== "string") {
+                    process.exitCode = 1;
+                    return;
+                  }
+                  process.stdout.write(body.data.deploymentVersion);
+                } catch {
+                  process.exitCode = 1;
                 }
               });
-            '
+            ' 2>/dev/null)" || observed_version=""
+
+            if [ -n "$observed_version" ]; then
+              last_observed_version="$observed_version"
+              if [ "$observed_version" = "$EXPECTED_DEPLOYMENT_VERSION" ]; then
+                echo "Production is serving the deployed revision $EXPECTED_DEPLOYMENT_VERSION."
+                exit 0
+              fi
+            fi
+
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Production verification failed after the propagation window. Expected SHA: $EXPECTED_DEPLOYMENT_VERSION. Last observed SHA: $last_observed_version."
+              exit 1
+            fi
+
+            echo "Production has not reported the expected revision yet; retrying in ${retry_interval_seconds}s."
+            sleep "$retry_interval_seconds"
+          done
