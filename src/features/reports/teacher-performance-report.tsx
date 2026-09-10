@@ -34,6 +34,28 @@ const metricDefinitions = {
     'Unique minutes of finalized additional direct or split coverage that count toward workload.',
 } as const;
 
+interface DetailIdentity {
+  readonly teacherId: string;
+  readonly startDate: string;
+  readonly endDate: string;
+}
+
+interface DetailState<T> {
+  readonly identity: DetailIdentity;
+  readonly value: T;
+}
+
+function sameDetailIdentity(
+  left: DetailIdentity | null,
+  right: DetailIdentity | null,
+): boolean {
+  return (
+    left?.teacherId === right?.teacherId &&
+    left?.startDate === right?.startDate &&
+    left?.endDate === right?.endDate
+  );
+}
+
 function localDate(offset = 0): string {
   const date = new Date();
   date.setDate(date.getDate() + offset);
@@ -63,9 +85,11 @@ export function TeacherPerformanceReport() {
     null,
   );
   const [detail, setDetail] =
-    useState<TeacherPerformanceDetailReportData | null>(null);
+    useState<DetailState<TeacherPerformanceDetailReportData> | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<DetailState<string> | null>(
+    null,
+  );
   const selectedRow = useRef<HTMLButtonElement | null>(null);
 
   const rangeError =
@@ -74,6 +98,10 @@ export function TeacherPerformanceReport() {
       : startDate > endDate
         ? 'From date must be on or before To date.'
         : null;
+  const activeDetailIdentity = selectedTeacherId
+    ? { teacherId: selectedTeacherId, startDate, endDate }
+    : null;
+  const detailRequestId = useRef(0);
 
   useEffect(() => {
     if (rangeError) return;
@@ -102,6 +130,12 @@ export function TeacherPerformanceReport() {
 
   useEffect(() => {
     if (!selectedTeacherId || rangeError) return;
+    const identity: DetailIdentity = {
+      teacherId: selectedTeacherId,
+      startDate,
+      endDate,
+    };
+    const requestId = ++detailRequestId.current;
     const controller = new AbortController();
     void Promise.resolve().then(() => {
       if (controller.signal.aborted) return;
@@ -114,17 +148,45 @@ export function TeacherPerformanceReport() {
         endDate,
         controller.signal,
       )
-        .then(setDetail)
+        .then((next) => {
+          if (detailRequestId.current === requestId)
+            setDetail({ identity, value: next });
+        })
         .catch((cause: unknown) => {
-          if (!(cause instanceof DOMException && cause.name === 'AbortError'))
-            setDetailError(message(cause));
+          if (
+            !(cause instanceof DOMException && cause.name === 'AbortError') &&
+            detailRequestId.current === requestId
+          )
+            setDetailError({ identity, value: message(cause) });
         })
         .finally(() => {
-          if (!controller.signal.aborted) setDetailLoading(false);
+          if (
+            !controller.signal.aborted &&
+            detailRequestId.current === requestId
+          )
+            setDetailLoading(false);
         });
     });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      detailRequestId.current += 1;
+    };
   }, [endDate, rangeError, selectedTeacherId, startDate]);
+
+  const visibleDetail = sameDetailIdentity(
+    detail?.identity ?? null,
+    activeDetailIdentity,
+  )
+    ? (detail?.value ?? null)
+    : null;
+  const visibleDetailError = sameDetailIdentity(
+    detailError?.identity ?? null,
+    activeDetailIdentity,
+  )
+    ? (detailError?.value ?? null)
+    : null;
+  const visibleDetailLoading =
+    !rangeError && (detailLoading || (!visibleDetail && !visibleDetailError));
 
   const teachers = useMemo(
     () =>
@@ -235,9 +297,9 @@ export function TeacherPerformanceReport() {
       )}
       {selectedTeacherId && (
         <TeacherDetailDrawer
-          detail={rangeError ? null : detail}
-          loading={rangeError ? false : detailLoading}
-          error={rangeError ? null : detailError}
+          detail={rangeError ? null : visibleDetail}
+          loading={rangeError ? false : visibleDetailLoading}
+          error={rangeError ? null : visibleDetailError}
           startDate={startDate}
           endDate={endDate}
           fallbackTeacher={
