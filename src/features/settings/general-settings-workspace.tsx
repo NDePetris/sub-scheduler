@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { GraduationCap } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,12 @@ export function GeneralSettingsWorkspace({
   const [logoError, setLogoError] = useState<string | null>(null);
   const [logoSaving, setLogoSaving] = useState(false);
   const [logoSaved, setLogoSaved] = useState<string | null>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
+  const clearLogoFile = () => {
+    setLogoFile(null);
+    if (logoInputRef.current) logoInputRef.current.value = '';
+  };
 
   const saveLogo = async () => {
     if (!logoFile) {
@@ -49,7 +55,7 @@ export function GeneralSettingsWorkspace({
     try {
       const updated = await uploadSchoolLogo(logoFile);
       setSettings(updated);
-      setLogoFile(null);
+      clearLogoFile();
       setLogoSaved('Logo saved.');
       onApplicationSettingsChanged();
     } catch (cause) {
@@ -66,7 +72,7 @@ export function GeneralSettingsWorkspace({
     try {
       const updated = await removeSchoolLogo();
       setSettings(updated);
-      setLogoFile(null);
+      clearLogoFile();
       setLogoSaved('Logo removed.');
       onApplicationSettingsChanged();
     } catch (cause) {
@@ -207,9 +213,22 @@ export function GeneralSettingsWorkspace({
               {schoolError}
             </p>
           )}
+          <div className="mt-5 flex items-center gap-3">
+            <Button
+              disabled={saving !== null}
+              onClick={() => void saveSchool()}
+            >
+              {saving === 'school' ? 'Saving…' : 'Save School'}
+            </Button>
+            {saved === 'school' && (
+              <p className="text-brand-dark text-sm" role="status">
+                School settings saved.
+              </p>
+            )}
+          </div>
           <div className="mt-6 border-t pt-5">
             <h3 className="text-sm font-semibold">School logo</h3>
-            <div className="mt-3 flex items-center gap-3">
+            <div className="mt-3 flex items-center gap-4">
               {settings.schoolLogoUrl ? (
                 <img
                   src={settings.schoolLogoUrl}
@@ -224,69 +243,84 @@ export function GeneralSettingsWorkspace({
                   <GraduationCap className="size-7" />
                 </span>
               )}
-              <p className="text-muted-foreground text-sm">
-                PNG, JPEG, or WebP. Maximum 2 MiB.
-              </p>
-            </div>
-            <label
-              className="mt-4 block text-sm font-semibold"
-              htmlFor="school-logo"
-            >
-              Choose logo
-            </label>
-            <input
-              id="school-logo"
-              className="mt-1.5 block text-sm"
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              onChange={(event) => {
-                setLogoFile(event.target.files?.[0] ?? null);
-                setLogoError(null);
-                setLogoSaved(null);
-              }}
-            />
-            {logoError && (
-              <p className="text-danger-dark mt-2 text-sm" role="alert">
-                {logoError}
-              </p>
-            )}
-            <div className="mt-4 flex items-center gap-3">
-              <Button
-                disabled={logoSaving || saving !== null}
-                onClick={() => void saveLogo()}
-              >
-                {logoSaving
-                  ? 'Saving…'
-                  : settings.schoolLogoUrl
-                    ? 'Replace Logo'
-                    : 'Upload Logo'}
-              </Button>
-              {settings.schoolLogoUrl && (
-                <Button
-                  disabled={logoSaving || saving !== null}
-                  variant="secondary"
-                  onClick={() => void deleteLogo()}
+              <div className="min-w-0 flex-1">
+                <p
+                  id="school-logo-constraints"
+                  className="text-muted-foreground text-sm"
                 >
-                  Remove Logo
-                </Button>
-              )}
-              {logoSaved && (
-                <p className="text-brand-dark text-sm" role="status">
-                  {logoSaved}
+                  PNG, JPEG, or WebP · Max 2 MiB
                 </p>
-              )}
+                <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <Button asChild variant="secondary">
+                    <label
+                      htmlFor="school-logo"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          logoInputRef.current?.click();
+                        }
+                      }}
+                    >
+                      Choose image
+                    </label>
+                  </Button>
+                  <p
+                    id="school-logo-file-name"
+                    className="text-muted-foreground min-w-0 truncate text-sm"
+                    role="status"
+                  >
+                    {logoFile ? logoFile.name : 'No file selected'}
+                  </p>
+                </div>
+                <input
+                  ref={logoInputRef}
+                  id="school-logo"
+                  className="sr-only"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  aria-describedby="school-logo-constraints school-logo-file-name"
+                  onChange={(event) => {
+                    setLogoFile(event.target.files?.[0] ?? null);
+                    setLogoError(null);
+                    setLogoSaved(null);
+                  }}
+                />
+                {logoError && (
+                  <p className="text-danger-dark mt-2 text-sm" role="alert">
+                    {logoError}
+                  </p>
+                )}
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <Button
+                    disabled={logoSaving || saving !== null || !logoFile}
+                    onClick={() => void saveLogo()}
+                  >
+                    {logoSaving
+                      ? 'Saving…'
+                      : settings.schoolLogoUrl
+                        ? 'Replace Logo'
+                        : 'Upload Logo'}
+                  </Button>
+                  {settings.schoolLogoUrl && (
+                    <Button
+                      disabled={logoSaving || saving !== null}
+                      variant="secondary"
+                      onClick={() => void deleteLogo()}
+                    >
+                      Remove Logo
+                    </Button>
+                  )}
+                  {logoSaved && (
+                    <p className="text-brand-dark text-sm" role="status">
+                      {logoSaved}
+                    </p>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-        <div className="mt-5 flex items-center gap-3">
-          <Button disabled={saving !== null} onClick={() => void saveSchool()}>
-            {saving === 'school' ? 'Saving…' : 'Save School'}
-          </Button>
-          {saved === 'school' && (
-            <p className="text-brand-dark text-sm" role="status">
-              School settings saved.
-            </p>
-          )}
         </div>
       </section>
 
