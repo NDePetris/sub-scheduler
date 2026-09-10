@@ -377,11 +377,12 @@ export interface CalendarDateData {
 export async function getTeacherPerformanceReport(
   startDate: string,
   endDate: string,
+  signal?: AbortSignal,
 ): Promise<TeacherPerformanceReportData> {
   const query = new URLSearchParams({ start: startDate, end: endDate });
   return apiRequest(
     `/api/reports/teacher-performance?${query.toString()}`,
-    undefined,
+    { signal },
     teacherPerformanceReportSchema,
   );
 }
@@ -390,11 +391,12 @@ export async function getTeacherPerformanceDetailReport(
   staffId: string,
   startDate: string,
   endDate: string,
+  signal?: AbortSignal,
 ): Promise<TeacherPerformanceDetailReportData> {
   const query = new URLSearchParams({ start: startDate, end: endDate });
   return apiRequest(
     `/api/reports/teacher-performance/${encodeURIComponent(staffId)}?${query.toString()}`,
-    undefined,
+    { signal },
     teacherPerformanceDetailReportSchema,
   );
 }

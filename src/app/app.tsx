@@ -4,6 +4,7 @@ import { SubPlanWorkspace } from '@/features/sub-plan/sub-plan-workspace';
 import { ScheduleImportWorkspace } from '@/features/schedule-import/schedule-import-workspace';
 import { StaffRoomsWorkspace } from '@/features/staff-rooms/staff-rooms-workspace';
 import { GeneralSettingsWorkspace } from '@/features/settings/general-settings-workspace';
+import { TeacherPerformanceReport } from '@/features/reports/teacher-performance-report';
 import { getBootstrapData, type BootstrapData } from '@/lib/api';
 
 import { ApplicationShell } from './application-shell';
@@ -89,6 +90,8 @@ export function App() {
       <GeneralSettingsWorkspace
         onApplicationSettingsChanged={() => void loadBootstrap()}
       />
+    ) : activeItem.path === '/reports' ? (
+      <TeacherPerformanceReport />
     ) : (
       <SectionPlaceholder item={activeItem} />
     );

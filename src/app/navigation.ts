@@ -2,6 +2,7 @@ import {
   CalendarClock,
   ClipboardList,
   FileSpreadsheet,
+  ChartColumn,
   Settings,
   SlidersHorizontal,
   UsersRound,
@@ -45,6 +46,12 @@ export const navigationItems: readonly NavigationItem[] = [
     path: '/default-sub-plans',
     icon: SlidersHorizontal,
     description: 'Structured school preferences',
+  },
+  {
+    label: 'Reports',
+    path: '/reports',
+    icon: ChartColumn,
+    description: 'Teacher performance reporting',
   },
   {
     label: 'Settings',
