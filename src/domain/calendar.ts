@@ -114,3 +114,18 @@ export function normalizeToSchoolDay(date: string): SchoolDate {
   while (!isSchoolDay(current)) current = shiftCalendarDate(current, 1);
   return current;
 }
+
+/** Formats an instant as the local calendar date used by the configured school. */
+export function schoolDateInTimezone(date: Date, timezone: string): SchoolDate {
+  const values = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value]),
+  );
+  return parseSchoolDate(`${values.year}-${values.month}-${values.day}`);
+}
