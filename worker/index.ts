@@ -24,6 +24,7 @@ import {
   validateSchoolLogo,
 } from './logo';
 import { PlanningRepository } from './db/planning-repository';
+import { ReportingRepository } from './db/reporting-repository';
 import { ScheduleRepository } from './db/schedule-repository';
 import { serializeErrorForLog } from './error-logging';
 import { HttpError, jsonError, jsonSuccess } from './http';
@@ -33,6 +34,11 @@ import type { Env } from './types';
 const dateSchema = z
   .string()
   .refine(isSchoolDate, 'Use a valid YYYY-MM-DD date.');
+const teacherPerformanceRangeSchema = z
+  .object({ start: dateSchema, end: dateSchema })
+  .refine((value) => value.start <= value.end, {
+    message: 'Start date must not be after end date.',
+  });
 const timeSchema = z
   .string()
   .refine(isLocalTime, 'Use a valid 24-hour HH:MM time.');
@@ -284,6 +290,7 @@ export default {
       const context = await createRequestContext(env, request, requestId);
       const importRepository = new ImportRepository(env.DB);
       const planningRepository = new PlanningRepository(env.DB);
+      const reportingRepository = new ReportingRepository(env.DB);
       const scheduleRepository = new ScheduleRepository(env.DB);
 
       if (url.pathname === '/api/bootstrap' && request.method === 'GET') {
@@ -296,6 +303,20 @@ export default {
               email: context.actor.email,
             },
           },
+          requestId,
+        );
+      }
+
+      if (
+        url.pathname === '/api/reports/teacher-performance' &&
+        request.method === 'GET'
+      ) {
+        const range = teacherPerformanceRangeSchema.parse({
+          start: url.searchParams.get('start'),
+          end: url.searchParams.get('end'),
+        });
+        return jsonSuccess(
+          await reportingRepository.teacherPerformance(range.start, range.end),
           requestId,
         );
       }

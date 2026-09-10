@@ -146,6 +146,9 @@ Do not persist authoritative copies of values that can be reliably derived:
 - Assignment, Assigned, Unresolved, and warning counts;
 - candidate recommendation ordering.
 
+### Teacher performance reporting
+
+Reporting uses a dedicated read-only `ReportingRepository` and a pure projection module rather than planning-state transitions. The teacher-performance summary reads current Teacher identities, authoritative Absences, calendar metadata, and finalized workload-eligible Assignment/segment intervals. Missing weekday calendar metadata retains the Monday-Friday fallback but is returned as provisional coverage metadata; it is not treated as fully authoritative calendar data. Coverage minutes are unique clock minutes per teacher/date, while Plan Periods Lost and period-equivalent calculations remain outside this projection.
 ### Overlap and assignment generation
 
 Two half-open intervals overlap when `max(start) < min(end)`. Expand a multi-day absence into its applicable calendar dates. Full-day absences consider every scheduled responsibility for that staff member on each date; partial absences consider only overlapping blocks. Each affected responsibility that requires attention produces one parent Assignment.

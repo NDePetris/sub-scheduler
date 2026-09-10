@@ -58,9 +58,35 @@ const generalSettingsSchema = z.object({
   workloadWarningThreshold: z.number().finite().positive(),
   workloadWindowDays: z.number().int().positive(),
 });
+const teacherPerformanceReportSchema = z.object({
+  range: z.object({
+    startDate: z.string(),
+    endDate: z.string(),
+    today: z.string(),
+    includesFutureDates: z.boolean(),
+  }),
+  calendar: z.object({
+    complete: z.boolean(),
+    missingWeekdayDates: z.number().int().nonnegative(),
+  }),
+  teachers: z.array(
+    z.object({
+      staffId: z.string(),
+      displayName: z.string(),
+      isActive: z.boolean(),
+      absences: z.number().int().nonnegative(),
+      blackoutDays: z.number().int().nonnegative(),
+      partialAbsences: z.number().int().nonnegative(),
+      coverageMinutes: z.number().int().nonnegative(),
+    }),
+  ),
+});
 
 export type BootstrapData = z.infer<typeof bootstrapSchema>;
 export type GeneralSettingsData = z.infer<typeof generalSettingsSchema>;
+export type TeacherPerformanceReportData = z.infer<
+  typeof teacherPerformanceReportSchema
+>;
 
 export interface GeneralSettingsUpdate {
   readonly schoolName?: string;
@@ -255,6 +281,17 @@ export interface CalendarDateData {
   readonly isBlackoutDay: boolean;
   readonly expectsSpecialSchedule: boolean;
   readonly label: string | null;
+}
+export async function getTeacherPerformanceReport(
+  startDate: string,
+  endDate: string,
+): Promise<TeacherPerformanceReportData> {
+  const query = new URLSearchParams({ start: startDate, end: endDate });
+  return apiRequest(
+    `/api/reports/teacher-performance?${query.toString()}`,
+    undefined,
+    teacherPerformanceReportSchema,
+  );
 }
 
 export async function listCalendarDates(): Promise<CalendarDateData[]> {
