@@ -14,6 +14,46 @@ export interface SchoolCalendarDateMetadata {
   readonly label: string | null;
 }
 
+export interface CalendarDateConfiguration extends SchoolCalendarDateMetadata {
+  readonly sourceType: string;
+  readonly updatedAt: string;
+  readonly updatedBy: string | null;
+  readonly specialSchedule: CalendarSpecialSchedule | null;
+  readonly specialScheduleExpectedWarning: boolean;
+}
+
+export interface CalendarSpecialSchedule {
+  readonly id: string;
+  readonly name: string;
+  readonly status: 'draft' | 'active' | 'retired';
+}
+
+export type CalendarDateConfigurationInput = SchoolCalendarDateMetadata;
+
+/** A persisted calendar date is an explicit administrative assertion. */
+export function calendarConfigurationErrors(
+  value: Pick<
+    CalendarDateConfigurationInput,
+    | 'expectedDayType'
+    | 'isSchoolDay'
+    | 'isBlackoutDay'
+    | 'expectsSpecialSchedule'
+  >,
+): readonly string[] {
+  const errors: string[] = [];
+  if (!value.isSchoolDay) {
+    if (value.expectedDayType !== null)
+      errors.push('Non-school dates cannot have an A/B designation.');
+    if (value.isBlackoutDay)
+      errors.push('Non-school dates cannot be blackout days.');
+    if (value.expectsSpecialSchedule)
+      errors.push('Non-school dates cannot expect a Special Schedule.');
+  }
+  if (value.isBlackoutDay && !value.isSchoolDay)
+    errors.push('Blackout dates must be school days.');
+  return errors;
+}
+
 /** Calendar metadata wins when supplied; rotation remains the legacy fallback. */
 export function calendarExpectedDayType(
   metadata: Pick<SchoolCalendarDateMetadata, 'expectedDayType'> | null,
