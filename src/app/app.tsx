@@ -87,7 +87,7 @@ export function App() {
       <StaffRoomsWorkspace onChanged={() => void loadBootstrap()} />
     ) : activeItem.path === '/settings' ? (
       <GeneralSettingsWorkspace
-        onSchoolNameChanged={() => void loadBootstrap()}
+        onApplicationSettingsChanged={() => void loadBootstrap()}
       />
     ) : (
       <SectionPlaceholder item={activeItem} />

@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
+import { GraduationCap } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
+  removeSchoolLogo,
+  uploadSchoolLogo,
   getGeneralSettings,
   updateGeneralSettings,
   type GeneralSettingsData,
 } from '@/lib/api';
 
 export function GeneralSettingsWorkspace({
-  onSchoolNameChanged,
+  onApplicationSettingsChanged,
 }: {
-  readonly onSchoolNameChanged: () => void;
+  readonly onApplicationSettingsChanged: () => void;
 }) {
   const [settings, setSettings] = useState<GeneralSettingsData | null>(null);
   const [schoolName, setSchoolName] = useState('');
@@ -22,6 +25,56 @@ export function GeneralSettingsWorkspace({
   const [workloadError, setWorkloadError] = useState<string | null>(null);
   const [saving, setSaving] = useState<'school' | 'workload' | null>(null);
   const [saved, setSaved] = useState<'school' | 'workload' | null>(null);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const [logoSaving, setLogoSaving] = useState(false);
+  const [logoSaved, setLogoSaved] = useState<string | null>(null);
+
+  const saveLogo = async () => {
+    if (!logoFile) {
+      setLogoError('Choose a PNG, JPEG, or WebP logo first.');
+      return;
+    }
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(logoFile.type)) {
+      setLogoError('Choose a PNG, JPEG, or WebP image.');
+      return;
+    }
+    if (logoFile.size > 2 * 1024 * 1024) {
+      setLogoError('School logos must be 2 MiB or smaller.');
+      return;
+    }
+    setLogoError(null);
+    setLogoSaved(null);
+    setLogoSaving(true);
+    try {
+      const updated = await uploadSchoolLogo(logoFile);
+      setSettings(updated);
+      setLogoFile(null);
+      setLogoSaved('Logo saved.');
+      onApplicationSettingsChanged();
+    } catch (cause) {
+      setLogoError(message(cause));
+    } finally {
+      setLogoSaving(false);
+    }
+  };
+
+  const deleteLogo = async () => {
+    setLogoError(null);
+    setLogoSaved(null);
+    setLogoSaving(true);
+    try {
+      const updated = await removeSchoolLogo();
+      setSettings(updated);
+      setLogoFile(null);
+      setLogoSaved('Logo removed.');
+      onApplicationSettingsChanged();
+    } catch (cause) {
+      setLogoError(message(cause));
+    } finally {
+      setLogoSaving(false);
+    }
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -56,7 +109,7 @@ export function GeneralSettingsWorkspace({
       setSettings(updated);
       setSchoolName(updated.schoolName);
       setSaved('school');
-      onSchoolNameChanged();
+      onApplicationSettingsChanged();
     } catch (cause) {
       setSchoolError(message(cause));
     } finally {
@@ -154,6 +207,76 @@ export function GeneralSettingsWorkspace({
               {schoolError}
             </p>
           )}
+          <div className="mt-6 border-t pt-5">
+            <h3 className="text-sm font-semibold">School logo</h3>
+            <div className="mt-3 flex items-center gap-3">
+              {settings.schoolLogoUrl ? (
+                <img
+                  src={settings.schoolLogoUrl}
+                  alt="Current school logo"
+                  className="size-14 rounded-md object-contain"
+                />
+              ) : (
+                <span
+                  className="bg-brand-soft text-brand-dark flex size-14 items-center justify-center rounded-md"
+                  aria-hidden="true"
+                >
+                  <GraduationCap className="size-7" />
+                </span>
+              )}
+              <p className="text-muted-foreground text-sm">
+                PNG, JPEG, or WebP. Maximum 2 MiB.
+              </p>
+            </div>
+            <label
+              className="mt-4 block text-sm font-semibold"
+              htmlFor="school-logo"
+            >
+              Choose logo
+            </label>
+            <input
+              id="school-logo"
+              className="mt-1.5 block text-sm"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={(event) => {
+                setLogoFile(event.target.files?.[0] ?? null);
+                setLogoError(null);
+                setLogoSaved(null);
+              }}
+            />
+            {logoError && (
+              <p className="text-danger-dark mt-2 text-sm" role="alert">
+                {logoError}
+              </p>
+            )}
+            <div className="mt-4 flex items-center gap-3">
+              <Button
+                disabled={logoSaving || saving !== null}
+                onClick={() => void saveLogo()}
+              >
+                {logoSaving
+                  ? 'Saving…'
+                  : settings.schoolLogoUrl
+                    ? 'Replace Logo'
+                    : 'Upload Logo'}
+              </Button>
+              {settings.schoolLogoUrl && (
+                <Button
+                  disabled={logoSaving || saving !== null}
+                  variant="secondary"
+                  onClick={() => void deleteLogo()}
+                >
+                  Remove Logo
+                </Button>
+              )}
+              {logoSaved && (
+                <p className="text-brand-dark text-sm" role="status">
+                  {logoSaved}
+                </p>
+              )}
+            </div>
+          </div>
         </div>
         <div className="mt-5 flex items-center gap-3">
           <Button disabled={saving !== null} onClick={() => void saveSchool()}>

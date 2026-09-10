@@ -1,34 +1,51 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "school-sub-planning",
-  "main": "worker/index.ts",
-  "compatibility_date": "2026-08-12",
-  "assets": {
-    "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"],
-  },
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "school-sub-planning-local",
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "migrations_dir": "migrations",
-    },
-  ],
-
-  "env": {
-    "production": {
-      "vars": {
-        "APP_ENV": "production",
-      },
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "school-sub-planning-production",
-          "database_id": "3943c18d-cbf5-49cb-bc94-65e6a510cd4a",
-          "migrations_dir": "migrations",
-        },
-      ],
-    },
-  },
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "school-sub-planning",
+	"main": "worker/index.ts",
+	"compatibility_date": "2026-08-12",
+	"assets": {
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*"
+		],
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "school-sub-planning-local",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"migrations_dir": "migrations",
+		},
+	],
+	"r2_buckets": [
+		{
+			"binding": "SCHOOL_ASSETS",
+			"bucket_name": "school-sub-planning-assets-local",
+		},
+		{
+			"bucket_name": "school-sub-planning-assets-production",
+			"binding": "school_sub_planning_assets_production"
+		},
+	],
+	"env": {
+		"production": {
+			"vars": {
+				"APP_ENV": "production",
+			},
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "school-sub-planning-production",
+					"database_id": "3943c18d-cbf5-49cb-bc94-65e6a510cd4a",
+					"migrations_dir": "migrations",
+				},
+			],
+			"r2_buckets": [
+				{
+					"binding": "SCHOOL_ASSETS",
+					"bucket_name": "school-sub-planning-assets-production",
+				},
+			],
+		},
+	},
 }

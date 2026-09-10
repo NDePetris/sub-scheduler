@@ -1,5 +1,6 @@
 export interface Env {
   DB: D1Database;
+  SCHOOL_ASSETS: R2Bucket;
   APP_ENV?: string;
   DEPLOYMENT_VERSION?: string;
   DEV_USER_EMAIL?: string;

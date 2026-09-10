@@ -138,6 +138,7 @@ function makeEnv(
     CLOUDFLARE_ACCESS_AUD: 'school-sub-planning-audience',
     CLOUDFLARE_ACCESS_TEAM_DOMAIN: 'school.cloudflareaccess.com',
     DB: { prepare: vi.fn().mockReturnValue({ bind }) } as unknown as D1Database,
+    SCHOOL_ASSETS: {} as R2Bucket,
     DEV_USER_EMAIL: 'admin@sub-planning.test',
     ...overrides,
   };
