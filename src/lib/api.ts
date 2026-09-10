@@ -81,11 +81,103 @@ const teacherPerformanceReportSchema = z.object({
     }),
   ),
 });
+const teacherPerformanceDetailReportSchema = z.object({
+  range: z.object({
+    startDate: z.string(),
+    endDate: z.string(),
+    today: z.string(),
+    includesFutureDates: z.boolean(),
+  }),
+  calendar: z.object({
+    complete: z.boolean(),
+    missingWeekdayDates: z.number().int().nonnegative(),
+  }),
+  teacher: z.object({
+    staffId: z.string(),
+    displayName: z.string(),
+    isActive: z.boolean(),
+    standardPeriodMinutes: z.number().int().positive().nullable(),
+    standardPeriodSource: z.enum([
+      'configured',
+      'historical_schedule',
+      'mixed',
+      'unknown',
+    ]),
+  }),
+  absenceSummary: z.object({
+    absences: z.number().int().nonnegative(),
+    regularFullDayAbsences: z.number().int().nonnegative(),
+    blackoutDays: z.number().int().nonnegative(),
+    partialAbsences: z.number().int().nonnegative(),
+    partialAbsenceMinutes: z.number().int().nonnegative(),
+  }),
+  coverageSummary: z.object({
+    coverageMinutes: z.number().int().nonnegative(),
+    coverageSegments: z.number().int().nonnegative(),
+    coveragePeriodEquivalents: z.number().finite().nonnegative().nullable(),
+    planPeriodsLost: z.number().finite().nonnegative().nullable(),
+  }),
+  absenceDetails: z.object({
+    fullDayAbsences: z.array(
+      z.object({
+        date: z.string(),
+        isBlackoutDay: z.boolean(),
+        calendarLabel: z.string().nullable(),
+      }),
+    ),
+    partialAbsences: z.array(
+      z.object({
+        date: z.string(),
+        totalMinutes: z.number().int().nonnegative(),
+        intervals: z.array(
+          z.object({
+            startTime: z.string(),
+            endTime: z.string(),
+            minutes: z.number().int().positive(),
+          }),
+        ),
+        calendarLabel: z.string().nullable(),
+      }),
+    ),
+  }),
+  coverageDetails: z.array(
+    z.object({
+      date: z.string(),
+      coverageMinutes: z.number().int().nonnegative(),
+      coverageSegments: z.number().int().nonnegative(),
+      coveragePeriodEquivalents: z.number().finite().nonnegative().nullable(),
+      planPeriodsLost: z.number().finite().nonnegative().nullable(),
+      standardPeriodMinutes: z.number().int().positive().nullable(),
+      standardPeriodSource: z.enum([
+        'configured',
+        'historical_schedule',
+        'unknown',
+      ]),
+      entries: z.array(
+        z.object({
+          assignmentId: z.string(),
+          segmentId: z.string().nullable(),
+          startTime: z.string(),
+          endTime: z.string(),
+          minutes: z.number().int().positive(),
+          responsibilityType: z.string(),
+          description: z.string(),
+          absentStaffId: z.string(),
+          absentStaffName: z.string(),
+          resolutionType: z.string().nullable(),
+        }),
+      ),
+    }),
+  ),
+});
 
 export type BootstrapData = z.infer<typeof bootstrapSchema>;
 export type GeneralSettingsData = z.infer<typeof generalSettingsSchema>;
 export type TeacherPerformanceReportData = z.infer<
   typeof teacherPerformanceReportSchema
+>;
+export type TeacherPerformanceDetailReportData = z.infer<
+  typeof teacherPerformanceDetailReportSchema
 >;
 
 export interface GeneralSettingsUpdate {
@@ -291,6 +383,19 @@ export async function getTeacherPerformanceReport(
     `/api/reports/teacher-performance?${query.toString()}`,
     undefined,
     teacherPerformanceReportSchema,
+  );
+}
+
+export async function getTeacherPerformanceDetailReport(
+  staffId: string,
+  startDate: string,
+  endDate: string,
+): Promise<TeacherPerformanceDetailReportData> {
+  const query = new URLSearchParams({ start: startDate, end: endDate });
+  return apiRequest(
+    `/api/reports/teacher-performance/${encodeURIComponent(staffId)}?${query.toString()}`,
+    undefined,
+    teacherPerformanceDetailReportSchema,
   );
 }
 
