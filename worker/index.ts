@@ -308,6 +308,27 @@ export default {
       }
 
       if (
+        /^\/api\/reports\/teacher-performance\/[^/]+$/.test(url.pathname) &&
+        request.method === 'GET'
+      ) {
+        const staffId = decodeURIComponent(
+          url.pathname.slice('/api/reports/teacher-performance/'.length),
+        );
+        const range = teacherPerformanceRangeSchema.parse({
+          start: url.searchParams.get('start'),
+          end: url.searchParams.get('end'),
+        });
+        return jsonSuccess(
+          await reportingRepository.teacherPerformanceDetail(
+            staffId,
+            range.start,
+            range.end,
+          ),
+          requestId,
+        );
+      }
+
+      if (
         url.pathname === '/api/reports/teacher-performance' &&
         request.method === 'GET'
       ) {
