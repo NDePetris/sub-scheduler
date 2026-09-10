@@ -15,6 +15,14 @@ import { schoolScheduleAdapter } from '../src/features/schedule-import/school-sc
 import { ApplicationRepository } from './db/application-repository';
 import { CalendarRepository } from './db/calendar-repository';
 import { ImportRepository } from './db/import-repository';
+import {
+  isSchoolLogoContentType,
+  MAX_SCHOOL_LOGO_BYTES,
+  schoolLogoIdFromUrl,
+  schoolLogoKey,
+  schoolLogoUrl,
+  validateSchoolLogo,
+} from './logo';
 import { PlanningRepository } from './db/planning-repository';
 import { ScheduleRepository } from './db/schedule-repository';
 import { serializeErrorForLog } from './error-logging';
@@ -308,6 +316,57 @@ export default {
           ),
           requestId,
         );
+      }
+
+      if (url.pathname === '/api/settings/logo' && request.method === 'PUT') {
+        return jsonSuccess(
+          await replaceSchoolLogo(
+            request,
+            env,
+            applicationRepository,
+            context.actor.id,
+            requestId,
+          ),
+          requestId,
+        );
+      }
+
+      if (
+        url.pathname === '/api/settings/logo' &&
+        request.method === 'DELETE'
+      ) {
+        const cleared = await applicationRepository.clearSchoolLogoUrl(
+          context.actor.id,
+        );
+        await bestEffortDeleteSchoolLogo(env, cleared.schoolLogoUrl, requestId);
+        return jsonSuccess(cleared.settings, requestId);
+      }
+
+      const logoMatch = /^\/api\/settings\/logo\/([0-9a-f-]+)$/.exec(
+        url.pathname,
+      );
+      if (logoMatch?.[1] && request.method === 'GET') {
+        const logoId = logoMatch[1];
+        if (
+          (await applicationRepository.getSchoolLogoUrl()) !==
+          schoolLogoUrl(logoId)
+        ) {
+          throw new HttpError(404, 'logo_not_found', 'School logo not found.');
+        }
+        const object = await env.SCHOOL_ASSETS.get(schoolLogoKey(logoId));
+        if (!object)
+          throw new HttpError(404, 'logo_not_found', 'School logo not found.');
+        const contentType = object.httpMetadata?.contentType;
+        if (!isSchoolLogoContentType(contentType))
+          throw new HttpError(404, 'logo_not_found', 'School logo not found.');
+        return new Response(object.body, {
+          headers: {
+            'cache-control': 'private, max-age=31536000, immutable',
+            'content-type': contentType,
+            'x-content-type-options': 'nosniff',
+            'x-request-id': requestId,
+          },
+        });
       }
 
       if (url.pathname === '/api/staff' && request.method === 'GET') {
@@ -990,6 +1049,117 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+async function replaceSchoolLogo(
+  request: Request,
+  env: Env,
+  applicationRepository: ApplicationRepository,
+  actorId: string,
+  requestId: string,
+) {
+  const contentType = request.headers
+    .get('content-type')
+    ?.split(';', 1)[0]
+    ?.trim()
+    .toLowerCase();
+  if (!isSchoolLogoContentType(contentType)) {
+    throw new HttpError(
+      415,
+      'unsupported_logo_type',
+      'School logos must be PNG, JPEG, or WebP images.',
+    );
+  }
+  const logo = validateSchoolLogo(
+    contentType,
+    await readSchoolLogoBody(request),
+  );
+  const previousLogoUrl = await applicationRepository.getSchoolLogoUrl();
+  const logoId = crypto.randomUUID();
+  await env.SCHOOL_ASSETS.put(schoolLogoKey(logoId), logo.bytes, {
+    httpMetadata: { contentType: logo.contentType },
+  });
+
+  try {
+    const settings = await applicationRepository.replaceSchoolLogoUrl(
+      schoolLogoUrl(logoId),
+      actorId,
+    );
+    await bestEffortDeleteSchoolLogo(env, previousLogoUrl, requestId);
+    return settings;
+  } catch (cause) {
+    await bestEffortDeleteSchoolLogo(env, schoolLogoUrl(logoId), requestId);
+    throw cause;
+  }
+}
+
+async function bestEffortDeleteSchoolLogo(
+  env: Env,
+  logoUrl: string | null,
+  requestId: string,
+): Promise<void> {
+  const logoId = schoolLogoIdFromUrl(logoUrl);
+  if (!logoId) return;
+  try {
+    await env.SCHOOL_ASSETS.delete(schoolLogoKey(logoId));
+  } catch (cause) {
+    console.error(
+      JSON.stringify({
+        message: 'School logo object cleanup failed.',
+        requestId,
+        logoId,
+        error: serializeErrorForLog(cause),
+      }),
+    );
+  }
+}
+
+async function readSchoolLogoBody(request: Request): Promise<ArrayBuffer> {
+  const contentLength = Number(request.headers.get('content-length'));
+  if (
+    Number.isSafeInteger(contentLength) &&
+    contentLength > MAX_SCHOOL_LOGO_BYTES
+  ) {
+    throw new HttpError(
+      413,
+      'logo_too_large',
+      'School logos must be 2 MiB or smaller.',
+    );
+  }
+  const reader = request.body?.getReader();
+  if (!reader) return new ArrayBuffer(0);
+
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_SCHOOL_LOGO_BYTES) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The oversized upload is still rejected if cancellation fails.
+        }
+        throw new HttpError(
+          413,
+          'logo_too_large',
+          'School logos must be 2 MiB or smaller.',
+        );
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer;
+}
 async function readJson(request: Request): Promise<unknown> {
   if (!request.headers.get('content-type')?.includes('application/json')) {
     throw new HttpError(

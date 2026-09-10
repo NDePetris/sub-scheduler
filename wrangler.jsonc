@@ -15,6 +15,12 @@
       "migrations_dir": "migrations",
     },
   ],
+  "r2_buckets": [
+    {
+      "binding": "SCHOOL_ASSETS",
+      "bucket_name": "school-sub-planning-assets-local",
+    },
+  ],
 
   "env": {
     "production": {
@@ -27,6 +33,12 @@
           "database_name": "school-sub-planning-production",
           "database_id": "3943c18d-cbf5-49cb-bc94-65e6a510cd4a",
           "migrations_dir": "migrations",
+        },
+      ],
+      "r2_buckets": [
+        {
+          "binding": "SCHOOL_ASSETS",
+          "bucket_name": "school-sub-planning-assets-production",
         },
       ],
     },

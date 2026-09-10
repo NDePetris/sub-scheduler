@@ -113,6 +113,18 @@ The application is one Cloudflare Worker that serves both the Vite-generated cli
 
 `wrangler.jsonc` intentionally contains a zero UUID placeholder and the local database name. Before the first production deployment, create the separate production D1 database, configure the production D1 binding, configure Cloudflare Access and the `authorized_users` allowlist, and set the production Access identifiers described above.
 
+### School-logo R2 storage
+
+`SCHOOL_ASSETS` is the private R2 binding for administrator-uploaded school logos. `wrangler.jsonc` binds the local simulated bucket for development and tests and the production bucket `school-sub-planning-assets-production` for production. Local `npm run dev` and the Workers integration tests run with Wrangler/Miniflare's simulated R2 binding; no separate local bucket setup or credentials are required.
+
+Before deploying a Worker version that uses the production binding, an authorized operator must create the production bucket once (this command is documented here, but must not be run as part of deployment):
+
+```bash
+npx wrangler r2 bucket create school-sub-planning-assets-production
+```
+
+Keep the bucket private. Do not enable `r2.dev` or public bucket access, and no custom R2 domain is required. The browser never receives R2 credentials or public object URLs: authenticated Worker endpoints handle logo reads and writes.
+
 ### Automatic production deployment
 
 `.github/workflows/deploy-production.yml` runs for every push to `main` and can be manually rerun with **Run workflow**. It checks out that trusted revision, uses Node.js 24, installs the lockfile with `npm ci`, runs tests, TypeScript checks, and ESLint, then runs `npm run deploy:production`.

@@ -11,6 +11,7 @@ interface SettingsRow {
 
 interface GeneralSettingsRow {
   school_name: string;
+  school_logo_url: string | null;
   workload_warning_threshold: number;
   workload_window_days: number;
 }
@@ -174,7 +175,7 @@ export class ApplicationRepository {
   async getGeneralSettings() {
     const settings = await this.db
       .prepare(
-        `SELECT school_name, workload_warning_threshold, workload_window_days
+        `SELECT school_name, school_logo_url, workload_warning_threshold, workload_window_days
            FROM application_settings
           WHERE id = 'school'`,
       )
@@ -203,6 +204,49 @@ export class ApplicationRepository {
       )
       .run();
     return this.getGeneralSettings();
+  }
+
+  async getSchoolLogoUrl(): Promise<string | null> {
+    const settings = await this.db
+      .prepare(
+        `SELECT school_logo_url FROM application_settings WHERE id = 'school'`,
+      )
+      .first<{ school_logo_url: string | null }>();
+    if (!settings)
+      throw new Error('Application settings have not been seeded.');
+    return settings.school_logo_url;
+  }
+
+  async replaceSchoolLogoUrl(schoolLogoUrl: string, actorId: string) {
+    await this.db
+      .prepare(
+        `UPDATE application_settings
+            SET school_logo_url = ?,
+                updated_by = ?,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE id = 'school'`,
+      )
+      .bind(schoolLogoUrl, actorId)
+      .run();
+    return this.getGeneralSettings();
+  }
+
+  async clearSchoolLogoUrl(actorId: string) {
+    const schoolLogoUrl = await this.getSchoolLogoUrl();
+    await this.db
+      .prepare(
+        `UPDATE application_settings
+            SET school_logo_url = NULL,
+                updated_by = ?,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          WHERE id = 'school'`,
+      )
+      .bind(actorId)
+      .run();
+    return {
+      schoolLogoUrl,
+      settings: await this.getGeneralSettings(),
+    };
   }
 
   async listStaff(includeInactive = false): Promise<StaffSummary[]> {
@@ -590,6 +634,7 @@ function roomDto(row: RoomRow) {
 function generalSettingsDto(row: GeneralSettingsRow) {
   return {
     schoolName: row.school_name,
+    schoolLogoUrl: row.school_logo_url,
     workloadWarningThreshold: row.workload_warning_threshold,
     workloadWindowDays: row.workload_window_days,
   };

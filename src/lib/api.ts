@@ -54,6 +54,7 @@ const errorEnvelopeSchema = z.object({
 
 const generalSettingsSchema = z.object({
   schoolName: z.string(),
+  schoolLogoUrl: z.string().nullable(),
   workloadWarningThreshold: z.number().finite().positive(),
   workloadWindowDays: z.number().int().positive(),
 });
@@ -420,6 +421,24 @@ export async function updateGeneralSettings(
   return apiRequest(
     '/api/settings',
     { method: 'PATCH', body: JSON.stringify(input) },
+    generalSettingsSchema,
+  );
+}
+
+export async function uploadSchoolLogo(
+  file: File,
+): Promise<GeneralSettingsData> {
+  return apiRequest(
+    '/api/settings/logo',
+    { method: 'PUT', headers: { 'Content-Type': file.type }, body: file },
+    generalSettingsSchema,
+  );
+}
+
+export async function removeSchoolLogo(): Promise<GeneralSettingsData> {
+  return apiRequest(
+    '/api/settings/logo',
+    { method: 'DELETE' },
     generalSettingsSchema,
   );
 }

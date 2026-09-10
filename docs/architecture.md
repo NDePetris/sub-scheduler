@@ -131,6 +131,10 @@ The logical entities from the MVP map to these responsibilities:
 
 Import staging/validation and allowlist tables are implementation-support entities even though the exact schema is not prescribed by the MVP. Action-specific structured details may use validated JSON when relational columns would prematurely encode every redistribution/combine variant; staff and room references should remain real foreign keys wherever possible.
 
+### Private school-logo storage
+
+`application_settings.school_logo_url` is authoritative for the configured logo. Private R2 stores the binary under versioned keys; D1 stores only an application-relative authenticated Worker URL, never an R2 or public URL. Upload writes the new R2 object, updates the D1 reference, then best-effort cleans up the old object. If the D1 update fails, the new object is cleanup-attempted and the prior D1 state remains authoritative. Removal clears the D1 reference before best-effort R2 cleanup. The Worker serves only the currently configured URL; when it is null, the shell continues to use the `GraduationCap` fallback.
+
 ## Derived calculations
 
 Do not persist authoritative copies of values that can be reliably derived:

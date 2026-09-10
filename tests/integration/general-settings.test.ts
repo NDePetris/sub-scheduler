@@ -50,6 +50,7 @@ describe.sequential('General Settings API', () => {
     expect(initial.response.status).toBe(200);
     expect(data(initial.payload)).toEqual({
       schoolName: before?.school_name,
+      schoolLogoUrl: before?.school_logo_url,
       workloadWarningThreshold: before?.workload_warning_threshold,
       workloadWindowDays: before?.workload_window_days,
     });
@@ -60,6 +61,7 @@ describe.sequential('General Settings API', () => {
     expect(nameUpdate.response.status).toBe(200);
     expect(data(nameUpdate.payload)).toEqual({
       schoolName: 'Fictional Academy North',
+      schoolLogoUrl: before?.school_logo_url,
       workloadWarningThreshold: before?.workload_warning_threshold,
       workloadWindowDays: before?.workload_window_days,
     });
@@ -71,6 +73,7 @@ describe.sequential('General Settings API', () => {
     expect(workloadUpdate.response.status).toBe(200);
     expect(data(workloadUpdate.payload)).toEqual({
       schoolName: 'Fictional Academy North',
+      schoolLogoUrl: before?.school_logo_url,
       workloadWarningThreshold: 3.5,
       workloadWindowDays: 14,
     });
@@ -121,6 +124,10 @@ describe.sequential('General Settings API', () => {
       { workloadWindowDays: -1 },
       { workloadWindowDays: 1.5 },
       { schoolTimezone: 'America/New_York' },
+      {
+        schoolLogoUrl:
+          '/api/settings/logo/00000000-0000-0000-0000-000000000000',
+      },
     ]) {
       const result = await api('/api/settings', 'PATCH', body);
       expect(result.response.status).toBe(400);
