@@ -3,7 +3,7 @@
 :root {
   color-scheme: light;
   --brand: #7ea243;
-  --brand-dark: #5c7b2d;
+  --brand-dark: #557129;
   --brand-soft: #eff5e7;
   --canvas: #f5f6f4;
   --foreground: #262a25;
@@ -69,10 +69,27 @@ a {
   background: white;
   padding: 0 0.625rem;
   font-size: 0.875rem;
+  line-height: 1.25rem;
   outline: none;
+  transition:
+    border-color 150ms,
+    box-shadow 150ms,
+    background-color 150ms;
 }
 
-.field:focus {
+.field:focus-visible {
   border-color: var(--brand);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 25%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 30%, transparent);
+}
+
+.field:disabled {
+  cursor: not-allowed;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+
+.field::placeholder {
+  color: var(--muted-foreground);
+  opacity: 1;
 }

@@ -253,11 +253,7 @@ function CalendarDayButton({
             {tags.map((tag) => (
               <Badge
                 key={tag}
-                className={
-                  tag === 'A' || tag === 'B'
-                    ? 'border-brand/40 bg-brand-soft text-brand-dark'
-                    : ''
-                }
+                variant={tag === 'A' || tag === 'B' ? 'success' : 'neutral'}
               >
                 {tag}
               </Badge>

@@ -5,19 +5,20 @@ import type { ButtonHTMLAttributes } from 'react';
 import { cn } from '@/lib/cn';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 rounded-md text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex min-h-9 items-center justify-center gap-2 rounded-md px-3.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
   {
     variants: {
       variant: {
-        primary: 'bg-brand text-white hover:bg-brand-dark',
+        primary: 'bg-brand-dark text-white hover:bg-[#4a6422]',
         secondary:
           'border border-border bg-white text-foreground hover:bg-muted',
         ghost: 'text-muted-foreground hover:bg-muted hover:text-foreground',
+        destructive: 'bg-danger text-white hover:bg-danger-dark',
       },
       size: {
-        default: 'h-9 px-3.5',
-        sm: 'h-8 px-3 text-xs',
-        icon: 'size-9',
+        default: 'h-9',
+        sm: 'min-h-8 h-8 px-3 text-xs',
+        icon: 'size-9 min-h-0 p-0',
       },
     },
     defaultVariants: { variant: 'primary', size: 'default' },

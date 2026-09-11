@@ -1283,12 +1283,10 @@ function SegmentCandidateOption({
         <span className="font-semibold">{candidate.displayName}</span>
         <Badge>{availabilityLabel(candidate)}</Badge>
         {candidate.isDefaultCandidate && (
-          <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-            Default
-          </Badge>
+          <Badge variant="success">Default</Badge>
         )}
         {thresholdWarning && (
-          <Badge className="border-warning/40 bg-warning-soft text-warning-dark">
+          <Badge variant="warning">
             <AlertTriangle className="size-3" aria-hidden="true" />
             Workload Warning
           </Badge>
@@ -1369,12 +1367,10 @@ function CandidateCard({
             <span className="font-semibold">{candidate.displayName}</span>
             <Badge>{availabilityLabel(candidate)}</Badge>
             {candidate.isDefaultCandidate && (
-              <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-                Default
-              </Badge>
+              <Badge variant="success">Default</Badge>
             )}
             {thresholdWarning && (
-              <Badge className="border-warning/40 bg-warning-soft text-warning-dark">
+              <Badge variant="warning">
                 <AlertTriangle className="size-3" aria-hidden="true" />
                 Workload Warning
               </Badge>
@@ -1581,9 +1577,7 @@ function SharedDutyStaffing({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="font-bold">Shared duty staffing</p>
           {staffing.actualStaff.length === 1 && (
-            <Badge className="border-warning/30 bg-warning-soft text-warning-dark">
-              Solo (derived)
-            </Badge>
+            <Badge variant="warning">Solo (derived)</Badge>
           )}
         </div>
         <div>
@@ -1703,11 +1697,7 @@ function CurrentChoice({
             {assignment.resolutionSource && (
               <Badge>{assignment.resolutionSource}</Badge>
             )}
-            {assignment.isDefault && (
-              <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-                Default
-              </Badge>
-            )}
+            {assignment.isDefault && <Badge variant="success">Default</Badge>}
           </div>
         ) : assignment.segments.length > 0 ? (
           <div className="space-y-1">
