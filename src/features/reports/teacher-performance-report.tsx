@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/layout/page-header';
 import {
   getTeacherPerformanceDetailReport,
   getTeacherPerformanceReport,
@@ -204,16 +205,12 @@ export function TeacherPerformanceReport() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4">
-      <div>
-        <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-          Reports
-        </p>
-        <h1 className="mt-1 text-2xl font-bold">Teacher Performance</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Review absence and finalized coverage activity by Teacher.
-        </p>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-5">
+      <PageHeader
+        eyebrow="Reports"
+        title="Teacher Performance"
+        description="Review absence and finalized coverage activity by Teacher."
+      />
       <section
         className="border-border flex flex-wrap items-end gap-3 rounded-lg border bg-white p-4"
         aria-label="Report date range"

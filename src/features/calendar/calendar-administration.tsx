@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/layout/page-header';
 import {
   deleteCalendarDate,
   getCalendarRange,
@@ -106,17 +107,12 @@ export function CalendarAdministration() {
     month && setMonth(shiftMonth(month, amount));
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4">
-      <div>
-        <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-          Calendar
-        </p>
-        <h1 className="mt-1 text-2xl font-bold">Calendar administration</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Configure explicit school-day attributes. Dates without a saved
-          configuration use fallback behavior.
-        </p>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-5">
+      <PageHeader
+        eyebrow="Calendar"
+        title="Calendar administration"
+        description="Configure explicit school-day attributes. Dates without a saved configuration use fallback behavior."
+      />
       <section
         className="border-border rounded-lg border bg-white"
         aria-label="School calendar"

@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/layout/page-header';
 import {
   activateScheduleImport,
   activateSpecialScheduleImport,
@@ -479,15 +480,11 @@ export function ScheduleImportWorkspace() {
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-5">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Schedule</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Understand which normal or one-day schedule applies, then manage
-            imports and effective dates safely.
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        eyebrow="Configuration"
+        title="Schedule"
+        description="Understand which normal or one-day schedule applies, then manage imports and effective dates safely."
+      />
 
       {error && <ErrorBanner message={error} />}
 

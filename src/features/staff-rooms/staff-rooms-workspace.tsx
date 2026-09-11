@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/layout/page-header';
 import {
   addStaffAlias,
   createRoom,
@@ -126,26 +127,24 @@ export function StaffRoomsWorkspace({
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <p className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-            Configuration
-          </p>
-          <h1 className="mt-1 text-2xl font-bold">Staff &amp; Rooms</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Manage the stable people and places used by schedules and Sub Plans.
-          </p>
-        </div>
-        <Button
-          onClick={() =>
-            section === 'staff' ? setEditingStaff('new') : setEditingRoom('new')
-          }
-        >
-          <Plus className="size-4" aria-hidden="true" /> Add{' '}
-          {section === 'staff' ? 'Staff' : 'Room'}
-        </Button>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-5">
+      <PageHeader
+        eyebrow="Configuration"
+        title="Staff & Rooms"
+        description="Manage the stable people and places used by schedules and Sub Plans."
+        actions={
+          <Button
+            onClick={() =>
+              section === 'staff'
+                ? setEditingStaff('new')
+                : setEditingRoom('new')
+            }
+          >
+            <Plus className="size-4" aria-hidden="true" /> Add{' '}
+            {section === 'staff' ? 'Staff' : 'Room'}
+          </Button>
+        }
+      />
 
       <div className="border-border flex items-center justify-between rounded-lg border bg-white p-2">
         <div
@@ -169,7 +168,7 @@ export function StaffRoomsWorkspace({
             Rooms <Badge>{rooms.filter((room) => room.isActive).length}</Badge>
           </Tab>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="border-border flex items-center gap-3 border-l pl-3">
           <label className="text-muted-foreground flex items-center gap-2 text-xs">
             <input
               type="checkbox"

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { GraduationCap } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/layout/page-header';
 import {
   removeSchoolLogo,
   uploadSchoolLogo,
@@ -179,12 +180,11 @@ export function GeneralSettingsWorkspace({
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <div>
-        <p className="text-muted-foreground text-sm">School administration</p>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight">
-          General Settings
-        </h1>
-      </div>
+      <PageHeader
+        eyebrow="Settings"
+        title="General Settings"
+        description="Manage school identity and coverage workload warning defaults."
+      />
 
       <section
         className="border-border rounded-lg border bg-white p-5"
