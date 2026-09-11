@@ -575,10 +575,17 @@ function AssignmentTable({
 }) {
   if (assignments.length === 0) {
     return (
-      <div className="text-muted-foreground p-10 text-center text-sm">
-        {totalAssignments === 0
-          ? 'No Needs Sub Assignments were generated for the recorded absences on this date.'
-          : 'No Needs Sub Assignments match these filters.'}
+      <div className="border-border text-muted-foreground m-4 rounded-md border border-dashed p-6 text-center text-sm">
+        <p className="text-foreground font-semibold">
+          {totalAssignments === 0
+            ? 'No coverage needs'
+            : 'No matching coverage needs'}
+        </p>
+        <p className="mt-1">
+          {totalAssignments === 0
+            ? 'No Needs Sub Assignments were generated for the recorded absences on this date.'
+            : 'No Needs Sub Assignments match these filters.'}
+        </p>
       </div>
     );
   }
@@ -766,7 +773,7 @@ function AbsenceDialog({
                   : undefined
               }
               value={teacherQuery}
-              onFocus={() => setOptionsOpen(true)}
+              onFocus={() => setOptionsOpen(Boolean(teacherQuery.trim()))}
               onChange={(event) => {
                 setTeacherQuery(event.target.value);
                 setSelectedStaffId('');
@@ -799,6 +806,7 @@ function AbsenceDialog({
               className="field"
               autoFocus
               required
+              aria-describedby="absent-teacher-help"
             />
             {optionsOpen && (
               <div
@@ -835,6 +843,12 @@ function AbsenceDialog({
               </div>
             )}
           </div>
+          <span
+            id="absent-teacher-help"
+            className="text-muted-foreground mt-1 block text-xs"
+          >
+            Required. Search, then choose a teacher from the list.
+          </span>
         </Labeled>
         <fieldset>
           <legend className="mb-2 text-sm font-semibold">
@@ -908,7 +922,15 @@ function AbsenceDialog({
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" disabled={busy}>
+          <Button
+            type="submit"
+            disabled={busy || !selectedStaffId}
+            title={
+              !selectedStaffId
+                ? 'Choose an absent teacher to enable Add Absence.'
+                : undefined
+            }
+          >
             Add Absence
           </Button>
         </div>
@@ -1329,7 +1351,7 @@ function FullSchedule({
           aria-label="Full Schedule legend"
         >
           <LegendItem className="border-slate-300 bg-slate-100">
-            Scheduled
+            Scheduled blocks (class, PLAN, Admin, or duty)
           </LegendItem>
           <LegendItem className="border-danger/50 bg-danger-soft">
             Absent / Needs Sub

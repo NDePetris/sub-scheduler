@@ -328,7 +328,12 @@ function StaffTable({
                 colSpan={6}
                 className="text-muted-foreground px-4 py-10 text-center"
               >
-                No staff match this view.
+                <p className="text-foreground font-semibold">
+                  No matching staff
+                </p>
+                <p className="mt-1 text-sm font-normal">
+                  Try adjusting the current view.
+                </p>
               </td>
             </tr>
           )}
@@ -386,7 +391,12 @@ function RoomsTable({
                 colSpan={3}
                 className="text-muted-foreground px-4 py-10 text-center"
               >
-                No rooms match this view.
+                <p className="text-foreground font-semibold">
+                  No matching rooms
+                </p>
+                <p className="mt-1 text-sm font-normal">
+                  Try adjusting the current view.
+                </p>
               </td>
             </tr>
           )}

@@ -235,8 +235,8 @@ export function TeacherPerformanceReport() {
         )}
       </section>
       {report?.range.includesFutureDates && (
-        <Warning>
-          <p>
+        <Warning title="Future dates included">
+          <p className="text-muted-foreground">
             This range includes future dates. Some totals may reflect planned
             absences or finalized future coverage. Set the end date to Today for
             historical-only results.
@@ -247,9 +247,9 @@ export function TeacherPerformanceReport() {
         </Warning>
       )}
       {report && !report.calendar.complete && (
-        <Warning>
-          <p>
-            Calendar setup is incomplete for this range
+        <Warning title="Calendar setup is incomplete">
+          <p className="text-muted-foreground">
+            This range is missing calendar setup
             {report.calendar.missingWeekdayDates
               ? ` (${report.calendar.missingWeekdayDates} weekdays are not configured)`
               : ''}
@@ -333,14 +333,25 @@ function DateField({
   );
 }
 
-function Warning({ children }: { readonly children: React.ReactNode }) {
+function Warning({
+  title,
+  children,
+}: {
+  readonly title: string;
+  readonly children: React.ReactNode;
+}) {
   return (
     <div
       className="border-warning/40 bg-warning-soft text-warning-dark flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm"
       role="status"
     >
       <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
-      {children}
+      <div className="min-w-0 flex-1">
+        <p className="font-semibold">{title}</p>
+        <div className="mt-0.5 flex flex-wrap items-center gap-3">
+          {children}
+        </div>
+      </div>
     </div>
   );
 }
@@ -459,7 +470,12 @@ function TeacherTable({
                 colSpan={5}
                 className="text-muted-foreground px-4 py-10 text-center"
               >
-                No Teachers were returned for this date range.
+                <p className="text-foreground font-semibold">
+                  No report results
+                </p>
+                <p className="mt-1 text-sm font-normal">
+                  No Teachers were returned for this date range.
+                </p>
               </td>
             </tr>
           )}

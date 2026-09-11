@@ -196,6 +196,21 @@ export function CalendarAdministration() {
             Loading calendar dates…
           </p>
         )}
+        <div
+          className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 border-t px-4 py-2 text-xs"
+          aria-label="Calendar status key"
+        >
+          <span>
+            <strong className="text-foreground">A / B</strong> day designation
+          </span>
+          <span>
+            <strong className="text-foreground">Dashed</strong> unconfigured
+          </span>
+          <span>
+            <strong className="text-foreground">No School / Special</strong>{' '}
+            labeled
+          </span>
+        </div>
       </section>
       {selectedDate && (
         <CalendarDateDrawer

@@ -1673,7 +1673,7 @@ function ErrorBanner({ message: value }: { readonly message: string }) {
 
 function Empty({ children }: { readonly children: React.ReactNode }) {
   return (
-    <div className="text-muted-foreground px-5 py-8 text-center text-sm">
+    <div className="border-border text-muted-foreground rounded-md border border-dashed px-5 py-8 text-center text-sm">
       {children}
     </div>
   );
