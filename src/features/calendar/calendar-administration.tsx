@@ -65,30 +65,35 @@ export function CalendarAdministration() {
   const range = cells.length
     ? { start: cells[0]!.date, end: cells[cells.length - 1]!.date }
     : null;
+  const rangeStart = range?.start ?? null;
+  const rangeEnd = range?.end ?? null;
 
   useEffect(() => {
-    if (!range) return;
+    if (!rangeStart || !rangeEnd) return;
     const id = ++requestId.current;
     const controller = new AbortController();
-    setLoading(true);
-    setError(null);
-    void getCalendarRange(range.start, range.end, controller.signal)
-      .then((next) => {
-        if (requestId.current === id) setDates(next.dates);
-      })
-      .catch((cause: unknown) => {
-        if (!isAbort(cause) && requestId.current === id)
-          setError(message(cause));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted && requestId.current === id)
-          setLoading(false);
-      });
+    void Promise.resolve().then(() => {
+      if (controller.signal.aborted) return;
+      setLoading(true);
+      setError(null);
+      return getCalendarRange(rangeStart, rangeEnd, controller.signal)
+        .then((next) => {
+          if (requestId.current === id) setDates(next.dates);
+        })
+        .catch((cause: unknown) => {
+          if (!isAbort(cause) && requestId.current === id)
+            setError(message(cause));
+        })
+        .finally(() => {
+          if (!controller.signal.aborted && requestId.current === id)
+            setLoading(false);
+        });
+    });
     return () => {
       controller.abort();
       requestId.current += 1;
     };
-  }, [range?.end, range?.start, retry]);
+  }, [rangeStart, rangeEnd, retry]);
 
   const configurations = useMemo(
     () => new Map(dates.map((date) => [date.date, date])),
@@ -530,16 +535,13 @@ function SpecialStatus({
 function pickInput(
   value: CalendarAdministrationDate,
 ): Omit<CalendarDateData, 'date'> {
-  const {
-    date: _date,
-    sourceType: _sourceType,
-    updatedAt: _updatedAt,
-    updatedBy: _updatedBy,
-    specialSchedule: _specialSchedule,
-    specialScheduleExpectedWarning: _warning,
-    ...input
-  } = value;
-  return input;
+  return {
+    expectedDayType: value.expectedDayType,
+    isSchoolDay: value.isSchoolDay,
+    isBlackoutDay: value.isBlackoutDay,
+    expectsSpecialSchedule: value.expectsSpecialSchedule,
+    label: value.label,
+  };
 }
 function isAbort(cause: unknown): boolean {
   return cause instanceof DOMException && cause.name === 'AbortError';
