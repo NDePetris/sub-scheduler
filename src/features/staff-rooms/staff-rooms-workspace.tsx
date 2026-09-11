@@ -304,9 +304,7 @@ function StaffTable({
               <td className="px-4 py-3">{person.canSub ? <Yes /> : 'No'}</td>
               <td className="px-4 py-3">
                 {person.isSchoolSub ? (
-                  <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-                    School Sub
-                  </Badge>
+                  <Badge variant="success">School Sub</Badge>
                 ) : (
                   '—'
                 )}
@@ -367,9 +365,7 @@ function RoomsTable({
               <td className="px-4 py-3 font-semibold">{room.name}</td>
               <td className="px-4 py-3">
                 {room.isActive ? (
-                  <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-                    Active
-                  </Badge>
+                  <Badge variant="success">Active</Badge>
                 ) : (
                   <Badge>Inactive</Badge>
                 )}
@@ -627,7 +623,7 @@ function StaffEditor({
               <Button
                 size="sm"
                 disabled={busy}
-                className="bg-danger hover:bg-danger-dark"
+                variant="destructive"
                 onClick={() =>
                   void run(() => setStaffActive(current.id, false)).then(
                     (ok) => {
@@ -757,7 +753,7 @@ function RoomEditor({
               <Button
                 size="sm"
                 disabled={busy}
-                className="bg-danger hover:bg-danger-dark"
+                variant="destructive"
                 onClick={() =>
                   void run(() => setRoomActive(current.id, false), true)
                 }

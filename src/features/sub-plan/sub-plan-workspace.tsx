@@ -211,14 +211,10 @@ export function SubPlanWorkspace({ bootstrap }: Props) {
             <h1 className="text-2xl font-bold tracking-tight">Sub Plan</h1>
             {detail?.plan.specialScheduleId && <Badge>Special Schedule</Badge>}
             {detail?.plan.status === 'finalized' && (
-              <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-                Finalized
-              </Badge>
+              <Badge variant="success">Finalized</Badge>
             )}
             {detail?.plan.status === 'draft' && (
-              <Badge className="border-warning/30 bg-warning-soft text-warning-dark">
-                Planning
-              </Badge>
+              <Badge variant="warning">Planning</Badge>
             )}
           </div>
           <p className="text-muted-foreground mt-0.5 text-xs">
@@ -1364,7 +1360,7 @@ function FullSchedule({
               <div className="border-border flex flex-wrap items-center gap-1.5 border-r pr-3 text-xs font-semibold">
                 {row.staffName}
                 {row.isAbsent && (
-                  <Badge className="border-danger/30 bg-danger-soft text-danger-dark px-1.5 py-0 text-[9px]">
+                  <Badge variant="danger" className="px-1.5 py-0 text-[9px]">
                     Absent
                   </Badge>
                 )}
@@ -1585,13 +1581,13 @@ function StatusBadge({
 }) {
   if (status === 'assigned')
     return (
-      <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
+      <Badge variant="success">
         <Check className="size-3" /> Assigned
       </Badge>
     );
   if (status === 'intentionally_uncovered') return <Badge>Not Covered</Badge>;
   return (
-    <Badge className="border-danger/30 bg-danger-soft text-danger-dark">
+    <Badge variant="danger">
       <AlertTriangle className="size-3" /> Unresolved
     </Badge>
   );
@@ -1667,11 +1663,7 @@ function AssignedCell({ assignment }: { readonly assignment: PlanAssignment }) {
         {assignment.resolutionSource && (
           <Badge>{assignment.resolutionSource}</Badge>
         )}
-        {assignment.isDefault && (
-          <Badge className="border-brand/30 bg-brand-soft text-brand-dark">
-            Default
-          </Badge>
-        )}
+        {assignment.isDefault && <Badge variant="success">Default</Badge>}
       </div>
       {(plannedRoom || note) && (
         <p className="text-muted-foreground text-xs">
