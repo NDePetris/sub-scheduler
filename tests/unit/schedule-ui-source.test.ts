@@ -31,6 +31,11 @@ describe('Add Absence staff selection source', () => {
     expect(source).toContain("setSelectedStaffId('')");
     expect(source).toContain('staffId: person.id');
     expect(source).toContain('autoFocus');
+    expect(source).toContain('Boolean(teacherQuery.trim())');
+    expect(source).toContain(
+      'Required. Search, then choose a teacher from the list.',
+    );
+    expect(source).toContain('disabled={busy || !selectedStaffId}');
     expect(source).not.toContain('<datalist');
     expect(source).not.toContain("person.role === 'teacher'");
   });
