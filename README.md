@@ -28,7 +28,7 @@ Apply all migrations and load the deterministic fictional seed data:
 npm run db:setup:local
 ```
 
-The command is safe to run repeatedly. It creates local state under `.wrangler/`, applies every forward-only migration, and executes `seed/local.sql`. The seed contains fictional staff, rooms, A/B and shared schedule entries, PLAN and Admin blocks, non-class responsibilities, a configured School Sub availability block, sanitized Default Sub Plan actions, and school settings. It contains no student data.
+The command is safe to run repeatedly. It creates local state under `.wrangler/`, applies every forward-only migration beginning with the authoritative `migrations/0001_initial_schema.sql` baseline, and executes `seed/local.sql`. The seed contains fictional staff, rooms, A/B and shared schedule entries, PLAN and Admin blocks, non-class responsibilities, a configured School Sub availability block, sanitized Default Sub Plan actions, and school settings. It contains no student data.
 
 The individual commands are also available:
 
@@ -37,7 +37,7 @@ npm run db:migrate:local
 npm run db:seed:local
 ```
 
-Add schema changes as new, forward-only files under `migrations/`; do not edit a migration after it has been applied outside disposable local/test environments.
+The pre-baseline migration chain is intentionally retired and databases created from it are not supported upgrade sources. Add future schema changes as new, forward-only files under `migrations/`; `0001_initial_schema.sql` becomes immutable once deployed.
 
 ## Local identity and development
 
@@ -163,10 +163,12 @@ npm run deploy:production
 
 Production schema changes are deliberately separate from application deployment. The GitHub deployment workflow never runs `wrangler d1 migrations apply`.
 
+The one-time post-merge replacement-database procedure for the migration baseline reset is in [docs/operations.md](docs/operations.md#one-time-migration-baseline-cutover). Do not apply `0001_initial_schema.sql` to a database created from the retired chain.
+
 Review the forward-only migration and its deployment order first, back up production data when the migration warrants it, then have an authorized operator apply it explicitly:
 
 ```bash
-npx wrangler d1 migrations apply school-sub-planning-production --remote --env production
+npx wrangler d1 migrations apply DB --remote --env production
 ```
 
 Confirm the migration result before deploying code that requires the new schema. Do not automatically reverse a migration: code rollback and database rollback are separate operational decisions.

@@ -1,6 +1,6 @@
 # Production operations runbook
 
-This runbook applies to `school-sub-planning-production` and its production D1 binding. It is for authorized operators only. Never use local commands with `--remote`, copy production data to local/non-production databases, or run a destructive operation during school planning without explicit incident approval.
+This runbook applies to the production D1 database bound as `DB`. It is for authorized operators only. Never use local commands with `--remote`, copy production data to local/non-production databases, or run a destructive operation during school planning without explicit incident approval.
 
 ## Before any recovery action
 
@@ -26,6 +26,47 @@ This runbook applies to `school-sub-planning-production` and its production D1 b
 
 Deployment never applies D1 migrations. A failed health check after upload is a rollback decision, not a reason to rerun a migration.
 
+## One-time migration baseline cutover
+
+This procedure applies only to the September 2026 baseline reset. The retired migration chain is not a supported upgrade path, and no database containing retained operational data requires migration through it. Keep the previous production database intact until every verification step succeeds.
+
+1. After the baseline-reset change is merged, update the local checkout of `main` and create a replacement database under a new name. The existing name cannot be reused while the previous database exists:
+
+   ```bash
+   git switch main
+   git pull --ff-only origin main
+   npx wrangler d1 create school-sub-planning-production-v2
+   ```
+
+   Record the `database_id` printed by Wrangler. Do not use `--update-config`; the production binding must be changed in a reviewed follow-up commit.
+
+2. Confirm that Wrangler sees the new baseline as unapplied, apply it to the replacement database, and verify the recorded migration. These commands target the newly named database, not the current production binding:
+
+   ```bash
+   npx wrangler d1 migrations list school-sub-planning-production-v2 --remote --env production
+   npx wrangler d1 migrations apply school-sub-planning-production-v2 --remote --env production
+   npx wrangler d1 migrations list school-sub-planning-production-v2 --remote --env production
+   npx wrangler d1 execute school-sub-planning-production-v2 --remote --env production --command "SELECT name FROM d1_migrations ORDER BY id"
+   ```
+
+   The final list must report no pending migrations, and the structural query must return only `0001_initial_schema.sql`.
+
+3. Prepare a separately reviewed SQL initialization file in an approved secure location outside the repository. It must create at least one approved `authorized_users` administrator and the single `application_settings` row with the school's configured timezone and settings. Apply it only to the replacement database:
+
+   ```bash
+   npx wrangler d1 execute school-sub-planning-production-v2 --remote --env production --file="APPROVED_SECURE_PATH/production-initialization.sql"
+   ```
+
+   Do not execute `seed/local.sql` against the replacement database; it is fictional local-only data. Confirm that the Cloudflare Access policy and Worker allowlist agree. After deployment, use the administrator UI to configure authoritative Staff, Rooms, Schedule, and Default Sub Plan data before the protected end-to-end smoke path.
+
+4. In a reviewed follow-up change, update `wrangler.jsonc` under `env.production.d1_databases[0]`: set `database_name` to `school-sub-planning-production-v2` and `database_id` to the recorded replacement UUID. Leave `binding: "DB"` and `migrations_dir: "migrations"` unchanged. Run `npm run check`, merge the binding change to `main`, and let the existing **Deploy production** workflow perform the canonical production deployment. Do not add database creation or migration to that workflow.
+
+5. Verify the public health endpoint returns HTTP 200 with `ok: true`, `data.status: "ok"`, and `data.database: "connected"`. Confirm `data.deploymentVersion` is the merged binding-change commit.
+
+6. Authenticate through Cloudflare Access as an allowlisted administrator. Verify the compact administrator workflow against authoritative operational configuration: **Schedule → Date → Absence → Default Sub Plan → Resolve Assignments → Final Communication**. Confirm the selected Schedule Version/Special Schedule, A/B designation, Assignment status, saved resolution, generated message, finalization, and reopen path. Do not create synthetic test records or use student-level data in production.
+
+7. Retain the previous database through an agreed observation window. It is safe to retire it only after migration state, `/api/health`, the protected smoke path, deployment version, and production binding have all been verified and no rollback requires the old binding. Deletion is a separate explicitly approved operator action; never delete the old database first.
+
 ## Application rollback
 
 ### Bad deploy, no schema change
@@ -49,17 +90,17 @@ Code and database recovery are separate. A Git revert or Worker rollback does no
 
 Production migrations are explicit operator actions; GitHub deployment never runs them.
 
-1. Review the new forward-only SQL migration and upgrade test. Deploy additive schema first, compatible code second, and destructive cleanup only in a later reviewed release.
+1. Review the new forward-only SQL migration and its tests. Any migration that rebuilds or replaces a populated table must include a populated upgrade regression test covering relevant parent/child relationships and data preservation before merge. Deploy additive schema first, compatible code second, and destructive cleanup only in a later reviewed release.
 2. Before risky work, record a UTC recovery timestamp/bookmark and confirm the remote database reports `version: production`:
 
    ```bash
-   npx wrangler d1 info school-sub-planning-production --remote --env production
+   npx wrangler d1 info school-sub-planning-production-v2 --env production
    ```
 
 3. Apply only after review:
 
    ```bash
-   npx wrangler d1 migrations apply school-sub-planning-production --remote --env production
+   npx wrangler d1 migrations apply DB --remote --env production
    ```
 
 4. Verify the migration result, `/api/health`, and affected workflow before code relies on it.
@@ -77,19 +118,19 @@ Time Travel is **in-place**: it overwrites the production database, cancels in-f
 Use the UTC incident timeline. These are read-only:
 
 ```bash
-npx wrangler d1 info school-sub-planning-production --remote --env production
-npx wrangler d1 time-travel info school-sub-planning-production --env production
-npx wrangler d1 time-travel info school-sub-planning-production --timestamp="2026-09-09T18:30:00Z" --env production
+npx wrangler d1 info school-sub-planning-production-v2 --env production
+npx wrangler d1 time-travel info DB --env production
+npx wrangler d1 time-travel info DB --timestamp="2026-09-09T18:30:00Z" --env production
 ```
 
 Record the current and candidate bookmarks. Choose immediately before the damaging write/migration and after the last desired write.
 
 ### Restore — destructive production operation
 
-**WARNING: This overwrites `school-sub-planning-production`, deletes all later writes, and cancels in-flight work. Obtain explicit incident approval and pause writes first.**
+**WARNING: This overwrites the production database bound as `DB`, deletes all later writes, and cancels in-flight work. Obtain explicit incident approval and pause writes first.**
 
 ```bash
-npx wrangler d1 time-travel restore school-sub-planning-production --bookmark="RECOVERY_BOOKMARK" --env production
+npx wrangler d1 time-travel restore DB --bookmark="RECOVERY_BOOKMARK" --env production
 ```
 
 Wrangler asks for confirmation. Save the pre-restore bookmark printed by the command. Do not automate production restore with unattended confirmation.
@@ -106,7 +147,7 @@ Wrangler asks for confirmation. Save the pre-restore bookmark printed by the com
 A controlled SQL export is available:
 
 ```bash
-npx wrangler d1 export school-sub-planning-production --remote --env production --output="approved-secure-path.sql"
+npx wrangler d1 export school-sub-planning-production-v2 --remote --env production --output="approved-secure-path.sql"
 ```
 
 Exports help with retention longer than Time Travel or forensics, but contain operational data, can block requests, and restore by executing SQL against a target. They are not a safe in-place replacement for Time Travel. Do not automate them until encrypted storage, access, retention, and restore-test policy are approved.

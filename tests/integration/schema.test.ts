@@ -8,7 +8,7 @@ interface TestEnv {
 
 const testEnv = env as unknown as TestEnv;
 
-describe('initial migration and local seed', () => {
+describe('canonical migration baseline and local seed', () => {
   it('contains every MVP core logical table', async () => {
     const result = await testEnv.DB.prepare(
       `SELECT name FROM sqlite_master
