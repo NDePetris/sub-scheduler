@@ -5,6 +5,7 @@ import { ScheduleImportWorkspace } from '@/features/schedule-import/schedule-imp
 import { StaffRoomsWorkspace } from '@/features/staff-rooms/staff-rooms-workspace';
 import { GeneralSettingsWorkspace } from '@/features/settings/general-settings-workspace';
 import { TeacherPerformanceReport } from '@/features/reports/teacher-performance-report';
+import { CalendarAdministration } from '@/features/calendar/calendar-administration';
 import { getBootstrapData, type BootstrapData } from '@/lib/api';
 
 import { ApplicationShell } from './application-shell';
@@ -84,6 +85,8 @@ export function App() {
       </div>
     ) : activeItem.path === '/schedule' ? (
       <ScheduleImportWorkspace />
+    ) : activeItem.path === '/calendar' ? (
+      <CalendarAdministration />
     ) : activeItem.path === '/staff-rooms' ? (
       <StaffRoomsWorkspace onChanged={() => void loadBootstrap()} />
     ) : activeItem.path === '/settings' ? (

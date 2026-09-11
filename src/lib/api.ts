@@ -392,12 +392,41 @@ export interface CalendarRangeData {
   readonly dates: readonly CalendarAdministrationDate[];
 }
 
+const calendarAdministrationDateSchema = z.object({
+  date: z.string(),
+  expectedDayType: z.enum(['A', 'B']).nullable(),
+  isSchoolDay: z.boolean(),
+  isBlackoutDay: z.boolean(),
+  expectsSpecialSchedule: z.boolean(),
+  label: z.string().nullable(),
+  sourceType: z.string(),
+  updatedAt: z.string(),
+  updatedBy: z.string().nullable(),
+  specialSchedule: z
+    .object({
+      id: z.string(),
+      name: z.string(),
+      status: z.enum(['draft', 'active', 'retired']),
+    })
+    .nullable(),
+  specialScheduleExpectedWarning: z.boolean(),
+});
+const calendarRangeSchema = z.object({
+  range: z.object({ startDate: z.string(), endDate: z.string() }),
+  dates: z.array(calendarAdministrationDateSchema),
+});
+
 export async function getCalendarRange(
   startDate: string,
   endDate: string,
+  signal?: AbortSignal,
 ): Promise<CalendarRangeData> {
   const query = new URLSearchParams({ start: startDate, end: endDate });
-  return apiRequest(`/api/calendar?${query.toString()}`);
+  return apiRequest(
+    `/api/calendar?${query.toString()}`,
+    { signal },
+    calendarRangeSchema,
+  );
 }
 
 export async function saveCalendarDate(
@@ -408,6 +437,7 @@ export async function saveCalendarDate(
     await apiRequest<{ date: CalendarAdministrationDate }>(
       `/api/calendar/${encodeURIComponent(date)}`,
       { method: 'PUT', body: JSON.stringify(input) },
+      z.object({ date: calendarAdministrationDateSchema }),
     )
   ).date;
 }
@@ -1069,8 +1099,10 @@ export async function deleteScheduleImport(importId: string): Promise<void> {
   await apiRequest(`/api/schedule-imports/${importId}`, { method: 'DELETE' });
 }
 
-export async function getScheduleManagement(): Promise<ScheduleManagementData> {
-  return apiRequest<ScheduleManagementData>('/api/schedules');
+export async function getScheduleManagement(
+  signal?: AbortSignal,
+): Promise<ScheduleManagementData> {
+  return apiRequest<ScheduleManagementData>('/api/schedules', { signal });
 }
 
 export async function configureSchedule(
