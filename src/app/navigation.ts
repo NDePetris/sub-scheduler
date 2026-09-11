@@ -1,5 +1,6 @@
 import {
   CalendarClock,
+  CalendarDays,
   ClipboardList,
   FileSpreadsheet,
   ChartColumn,
@@ -28,6 +29,12 @@ export const navigationItems: readonly NavigationItem[] = [
     path: '/absences',
     icon: CalendarClock,
     description: 'Recorded staff absences',
+  },
+  {
+    label: 'Calendar',
+    path: '/calendar',
+    icon: CalendarDays,
+    description: 'School-day calendar configuration',
   },
   {
     label: 'Schedule',
