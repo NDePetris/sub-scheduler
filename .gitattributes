@@ -1,2 +1,2 @@
-# D1 migrations are executed consistently across developer environments.
-migrations/*.sql text eol=lf
+# Prettier and D1 migrations must be consistent across developer environments.
+* text=auto eol=lf
