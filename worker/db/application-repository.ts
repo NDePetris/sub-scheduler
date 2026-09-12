@@ -2,6 +2,7 @@ import { normalizeIdentityValue } from '../../src/domain/identity';
 import { inferStandardPeriodMinutes } from '../../src/domain/planning';
 import { normalizeStaffRole, type StaffRole } from '../../src/domain/staff';
 import { HttpError } from '../http';
+import { expectedMigrationsAreApplied } from '../schema-readiness';
 
 interface SettingsRow {
   school_name: string;
@@ -90,6 +91,21 @@ export class ApplicationRepository {
 
   async checkConnection(): Promise<void> {
     await this.db.prepare('SELECT 1').first();
+  }
+
+  async isSchemaReady(): Promise<boolean> {
+    try {
+      const result = await this.db
+        .prepare('SELECT name FROM d1_migrations ORDER BY id')
+        .all<{ name: unknown }>();
+      return (
+        Array.isArray(result.results) &&
+        expectedMigrationsAreApplied(result.results.map((row) => row.name))
+      );
+    } catch {
+      // A reachable database without a readable ledger is not schema-ready.
+      return false;
+    }
   }
 
   async getBootstrapSummary() {

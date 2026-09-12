@@ -28,7 +28,7 @@ import { PlanningRepository } from './db/planning-repository';
 import { ReportingRepository } from './db/reporting-repository';
 import { ScheduleRepository } from './db/schedule-repository';
 import { serializeErrorForLog } from './error-logging';
-import { HttpError, jsonError, jsonSuccess } from './http';
+import { HttpError, jsonError, jsonHealthFailure, jsonSuccess } from './http';
 import { createRequestContext } from './identity';
 import type { Env } from './types';
 
@@ -300,12 +300,33 @@ export default {
       const calendarRepository = new CalendarRepository(env.DB);
       if (url.pathname === '/api/health' && request.method === 'GET') {
         await applicationRepository.checkConnection();
+        const schemaReady = await applicationRepository.isSchemaReady();
+        const deploymentVersion = env.DEPLOYMENT_VERSION?.trim() || 'unknown';
+        const timestamp = new Date().toISOString();
+        if (!schemaReady) {
+          return jsonHealthFailure(
+            {
+              status: 'error',
+              database: 'connected',
+              schema: 'not_ready',
+              deploymentVersion,
+              timestamp,
+            },
+            new HttpError(
+              503,
+              'schema_not_ready',
+              'The database schema is not ready for this Worker.',
+            ),
+            requestId,
+          );
+        }
         return jsonSuccess(
           {
             status: 'ok',
             database: 'connected',
-            deploymentVersion: env.DEPLOYMENT_VERSION?.trim() || 'unknown',
-            timestamp: new Date().toISOString(),
+            schema: 'ready',
+            deploymentVersion,
+            timestamp,
           },
           requestId,
         );

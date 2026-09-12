@@ -70,7 +70,7 @@ jobs:
               process.stdin.on("end", () => {
                 try {
                   const body = JSON.parse(response);
-                  if (!body.ok || body.data?.status !== "ok" || typeof body.data?.deploymentVersion !== "string") {
+                  if (!body.ok || body.data?.status !== "ok" || body.data?.database !== "connected" || body.data?.schema !== "ready" || typeof body.data?.deploymentVersion !== "string") {
                     process.exitCode = 1;
                     return;
                   }
