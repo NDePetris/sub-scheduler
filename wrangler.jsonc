@@ -20,10 +20,6 @@
       "binding": "SCHOOL_ASSETS",
       "bucket_name": "school-sub-planning-assets-local",
     },
-    {
-      "bucket_name": "school-sub-planning-assets-production",
-      "binding": "school_sub_planning_assets_production",
-    },
   ],
   "env": {
     "production": {

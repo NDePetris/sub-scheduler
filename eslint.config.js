@@ -12,7 +12,6 @@ export default tseslint.config(
       '.wrangler',
       'worker-configuration.d.ts',
       'eslint.config.js',
-      'scripts',
     ],
   },
   eslint.configs.recommended,
@@ -20,7 +19,10 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: ['scripts/*.mjs'],
+          defaultProject: 'tsconfig.scripts.json',
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -33,6 +35,10 @@ export default tseslint.config(
   {
     files: ['worker/**/*.ts'],
     languageOptions: { globals: globals.worker },
+  },
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: globals.node },
   },
   {
     files: ['**/*.config.ts', 'eslint.config.js'],
