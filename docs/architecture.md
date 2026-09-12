@@ -53,6 +53,8 @@ In September 2026, before any database contained retained operational data, the 
 
 Migration testing must always apply the full current chain to an empty isolated D1 database. Any future migration that rebuilds or replaces a populated table must also include a populated upgrade regression test covering relevant parent/child relationships and data preservation before merge.
 
+`/api/health` checks schema readiness read-only against D1's `d1_migrations` ledger. Its repository-controlled ordered expectation is an applied prefix: missing, reordered, duplicate, or malformed expected ledger entries make health unavailable, while additional forward-only migrations are permitted to support the documented schema-first compatible rollout. Add each future migration name to the expectation with its Worker change.
+
 ### Import adapter
 
 The importer is school-specific. It converts the stable spreadsheet layout into a normalized staging representation, reports ambiguity rather than guessing, maps imported names to stable Staff records, and activates only after administrator review.

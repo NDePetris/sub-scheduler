@@ -22,7 +22,7 @@ This runbook applies to the production D1 database bound as `DB`. It is for auth
    npm run deploy:production
    ```
 
-3. Confirm the canonical `/api/health` URL returns HTTP 200 with `status: ok` and `database: connected`. Through Cloudflare Access, smoke-check Schedule → date → absence → Sub Plan → resolve an Assignment → final message. Do not add test records to production.
+3. Confirm the canonical `/api/health` URL returns HTTP 200 with `status: ok`, `database: connected`, and `schema: ready`. A `schema_not_ready` response means D1 is reachable but its migration ledger does not contain the migration state the Worker needs. Inspect and apply the separately reviewed migration set; re-running the application deployment is not a substitute. Through Cloudflare Access, smoke-check Schedule → date → absence → Sub Plan → resolve an Assignment → final message. Do not add test records to production.
 
 Deployment never applies D1 migrations. A failed health check after upload is a rollback decision, not a reason to rerun a migration.
 
@@ -61,7 +61,7 @@ This procedure applies only to the September 2026 baseline reset. The retired mi
 
 4. In a reviewed follow-up change, update `wrangler.jsonc` under `env.production.d1_databases[0]`: set `database_name` to `school-sub-planning-production-v2` and `database_id` to the recorded replacement UUID. Leave `binding: "DB"` and `migrations_dir: "migrations"` unchanged. Run `npm run check`, merge the binding change to `main`, and let the existing **Deploy production** workflow perform the canonical production deployment. Do not add database creation or migration to that workflow.
 
-5. Verify the public health endpoint returns HTTP 200 with `ok: true`, `data.status: "ok"`, and `data.database: "connected"`. Confirm `data.deploymentVersion` is the merged binding-change commit.
+5. Verify the public health endpoint returns HTTP 200 with `ok: true`, `data.status: "ok"`, `data.database: "connected"`, and `data.schema: "ready"`. Confirm `data.deploymentVersion` is the merged binding-change commit.
 
 6. Authenticate through Cloudflare Access as an allowlisted administrator. Verify the compact administrator workflow against authoritative operational configuration: **Schedule → Date → Absence → Default Sub Plan → Resolve Assignments → Final Communication**. Confirm the selected Schedule Version/Special Schedule, A/B designation, Assignment status, saved resolution, generated message, finalization, and reopen path. Do not create synthetic test records or use student-level data in production.
 
@@ -103,7 +103,7 @@ Production migrations are explicit operator actions; GitHub deployment never run
    npx wrangler d1 migrations apply DB --remote --env production
    ```
 
-4. Verify the migration result, `/api/health`, and affected workflow before code relies on it.
+4. Verify the migration result, `/api/health` (including `schema: ready`), and affected workflow before code relies on it. The health endpoint only reads D1's migration ledger; deployment automation never applies migrations or receives D1 write permission.
 
 Use forward-only, backward-compatible changes where practical. Add before cleanup. Drops, rebuilds, data rewrites, and constraint tightening require explicit review and a maintenance window. Do not add automatic down-migrations.
 

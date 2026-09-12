@@ -37,3 +37,22 @@ export function jsonError(error: HttpError, requestId: string): Response {
     },
   );
 }
+
+/** Health is the one public API response that exposes structured failure state. */
+export function jsonHealthFailure<T>(
+  data: T,
+  error: HttpError,
+  requestId: string,
+): Response {
+  return Response.json(
+    {
+      ok: false,
+      data,
+      error: { code: error.code, message: error.message, requestId },
+    },
+    {
+      status: error.status,
+      headers: { ...JSON_HEADERS, 'x-request-id': requestId },
+    },
+  );
+}

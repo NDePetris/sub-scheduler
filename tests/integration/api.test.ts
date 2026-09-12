@@ -6,6 +6,40 @@ import type { Env } from '../../worker/types';
 
 const testEnv = env as unknown as Env;
 
+function healthDatabase({
+  migrationNames = ['0001_initial_schema.sql'],
+  unavailable = false,
+  unreadableLedger = false,
+}: {
+  readonly migrationNames?: readonly unknown[];
+  readonly unavailable?: boolean;
+  readonly unreadableLedger?: boolean;
+}): D1Database {
+  return {
+    prepare(query: string) {
+      if (query === 'SELECT 1') {
+        return {
+          first: () =>
+            unavailable
+              ? Promise.reject(new Error('database unavailable'))
+              : Promise.resolve(null),
+        };
+      }
+      if (query === 'SELECT name FROM d1_migrations ORDER BY id') {
+        return {
+          all: () =>
+            unreadableLedger
+              ? Promise.reject(new Error('ledger unavailable'))
+              : Promise.resolve({
+                  results: migrationNames.map((name) => ({ name })),
+                }),
+        };
+      }
+      throw new Error(`Unexpected health query: ${query}`);
+    },
+  } as unknown as D1Database;
+}
+
 describe('Worker and D1 smoke path', () => {
   it('serves D1-backed health information', async () => {
     const response = await worker.fetch(
@@ -14,7 +48,12 @@ describe('Worker and D1 smoke path', () => {
     );
     const body: {
       ok: boolean;
-      data: { status: string; database: string; deploymentVersion: string };
+      data: {
+        status: string;
+        database: string;
+        schema: string;
+        deploymentVersion: string;
+      };
     } = await response.json();
 
     expect(response.status).toBe(200);
@@ -24,9 +63,76 @@ describe('Worker and D1 smoke path', () => {
       data: {
         status: 'ok',
         database: 'connected',
+        schema: 'ready',
         deploymentVersion: 'test-commit-sha',
       },
     });
+  });
+
+  it('reports a reachable database with a missing migration as schema not ready', async () => {
+    const response = await worker.fetch(
+      new Request('https://app.test/api/health'),
+      {
+        ...testEnv,
+        DB: healthDatabase({ migrationNames: [] }),
+        DEPLOYMENT_VERSION: 'test-commit-sha',
+      },
+    );
+    const body: {
+      ok: boolean;
+      data: { status: string; database: string; schema: string };
+      error: { code: string; message: string };
+    } = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toMatchObject({
+      ok: false,
+      data: { status: 'error', database: 'connected', schema: 'not_ready' },
+      error: {
+        code: 'schema_not_ready',
+        message: 'The database schema is not ready for this Worker.',
+      },
+    });
+  });
+
+  it('does not report readiness when the migration ledger is malformed or unavailable', async () => {
+    for (const database of [
+      healthDatabase({ migrationNames: [null] }),
+      healthDatabase({ unreadableLedger: true }),
+    ]) {
+      const response = await worker.fetch(
+        new Request('https://app.test/api/health'),
+        { ...testEnv, DB: database },
+      );
+      const body: {
+        ok: boolean;
+        data: { database: string; schema: string };
+        error: { code: string };
+      } = await response.json();
+
+      expect(response.status).toBe(503);
+      expect(body).toMatchObject({
+        ok: false,
+        data: { database: 'connected', schema: 'not_ready' },
+        error: { code: 'schema_not_ready' },
+      });
+    }
+  });
+
+  it('keeps database connectivity failures distinct from schema incompatibility', async () => {
+    const response = await worker.fetch(
+      new Request('https://app.test/api/health'),
+      { ...testEnv, DB: healthDatabase({ unavailable: true }) },
+    );
+    const body: { ok: boolean; error: { code: string } } =
+      await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body).toMatchObject({
+      ok: false,
+      error: { code: 'internal_error' },
+    });
+    expect(body).not.toHaveProperty('data');
   });
 
   it('returns seeded school and schedule data through the authorized API', async () => {
