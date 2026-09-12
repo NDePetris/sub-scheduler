@@ -43,8 +43,13 @@ if (dryRun) deployArguments.push('--dry-run');
 
 await run(process.execPath, [wranglerCli, ...deployArguments], process.env);
 
+/**
+ * @param {string} command
+ * @param {readonly string[]} arguments_
+ * @param {NodeJS.ProcessEnv} environment
+ * @returns {Promise<void>}
+ */
 function run(command, arguments_, environment) {
-  const executable = process.platform === 'win32' ? `${command}.cmd` : command;
   return new Promise((resolve, reject) => {
     const child = spawn(command, arguments_, {
       env: environment,
@@ -62,6 +67,7 @@ function run(command, arguments_, environment) {
   });
 }
 
+/** @param {string} relativePath */
 function localCli(relativePath) {
   return resolve(projectRoot, 'node_modules', relativePath);
 }
