@@ -33,8 +33,8 @@
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "school-sub-planning-production",
-          "database_id": "3943c18d-cbf5-49cb-bc94-65e6a510cd4a",
+          "database_name": "school-sub-planning-production-v2",
+          "database_id": "4429f94d-0fb2-4d98-8b14-514033f58458",
           "migrations_dir": "migrations",
         },
       ],
