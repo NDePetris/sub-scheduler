@@ -12,6 +12,7 @@ export default tseslint.config(
       '.wrangler',
       'worker-configuration.d.ts',
       'eslint.config.js',
+      '.github/skills/impeccable/**',
     ],
   },
   eslint.configs.recommended,
