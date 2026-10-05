@@ -42,7 +42,7 @@ The app is an internal school operations tool protected by verified identity and
 - Store no student names, IDs, rosters, attendance, grades, or other student-level information.
 - Remain focused on administrator-controlled teacher coverage rather than becoming a general-purpose school information system.
 - Do not introduce opaque AI scheduling or global schedule optimization without explicit product direction.
-- Teacher-facing workflows, lesson or Sub Plan uploads, automatic communication, calendar synchronization, richer reporting, mobile optimization, and arbitrary recurring Word-document interpretation require explicit product approval.
+- Teacher-facing workflows, lesson or Sub Plan uploads, automatic communication, calendar synchronization, mobile optimization, and arbitrary recurring Word-document interpretation require explicit product approval.
 - Production school timezone, identity headers, staff mappings, and final Default Sub Plan content remain school-supplied configuration; future work must not guess them.
 
 ## Brand Commitments
