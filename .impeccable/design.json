@@ -1,0 +1,418 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-04T21:36:00-05:00",
+  "title": "Design System: School Sub Planning",
+  "extensions": {
+    "colorMeta": {
+      "apple-green": {
+        "role": "primary",
+        "displayName": "Apple Green",
+        "canonical": "#7ea243",
+        "tonalRamp": [
+          "color-mix(in oklch, #7ea243 55%, black)",
+          "color-mix(in oklch, #7ea243 70%, black)",
+          "color-mix(in oklch, #7ea243 85%, black)",
+          "#7ea243",
+          "color-mix(in oklch, #7ea243 85%, white)",
+          "color-mix(in oklch, #7ea243 65%, white)",
+          "color-mix(in oklch, #7ea243 40%, white)",
+          "color-mix(in oklch, #7ea243 15%, white)"
+        ]
+      },
+      "deep-moss": {
+        "role": "primary",
+        "displayName": "Deep Moss",
+        "canonical": "#557129",
+        "tonalRamp": [
+          "#1d280d",
+          "#2d3d15",
+          "#40561f",
+          "#557129",
+          "#718b45",
+          "#94aa70",
+          "#bdc9a7",
+          "#e9eee0"
+        ]
+      },
+      "pale-leaf": {
+        "role": "primary",
+        "displayName": "Pale Leaf",
+        "canonical": "#eff5e7",
+        "tonalRamp": [
+          "#20251b",
+          "#394331",
+          "#56634b",
+          "#77836c",
+          "#9aa68d",
+          "#bec8b3",
+          "#dce5d2",
+          "#f4f8ef"
+        ]
+      },
+      "warm-paper": {
+        "role": "neutral",
+        "displayName": "Warm Paper",
+        "canonical": "#f5f6f4",
+        "tonalRamp": [
+          "#252724",
+          "#40433f",
+          "#60635f",
+          "#81847f",
+          "#a3a6a1",
+          "#c5c8c3",
+          "#e3e5e1",
+          "#f7f8f6"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Clean Surface",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#262626",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a3a3a3",
+          "#c4c4c4",
+          "#e2e2e2",
+          "#ffffff"
+        ]
+      },
+      "foreground": {
+        "role": "neutral",
+        "displayName": "Charcoal Ink",
+        "canonical": "#262a25",
+        "tonalRamp": [
+          "#171a16",
+          "#262a25",
+          "#40453e",
+          "#626760",
+          "#858a83",
+          "#abb0a9",
+          "#d2d5d0",
+          "#f2f4f1"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Soft Utility Gray",
+        "canonical": "#f1f2ef",
+        "tonalRamp": [
+          "#252724",
+          "#41433f",
+          "#60625e",
+          "#81837e",
+          "#a2a49f",
+          "#c3c5c0",
+          "#e0e2dd",
+          "#f5f6f3"
+        ]
+      },
+      "muted-foreground": {
+        "role": "neutral",
+        "displayName": "Quiet Gray",
+        "canonical": "#687067",
+        "tonalRamp": [
+          "#20241f",
+          "#343a33",
+          "#4d554c",
+          "#687067",
+          "#858d84",
+          "#a5aca3",
+          "#c8cdc6",
+          "#edf0eb"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Hairline Gray",
+        "canonical": "#dfe3dd",
+        "tonalRamp": [
+          "#242824",
+          "#3e443d",
+          "#5c635b",
+          "#7e857c",
+          "#a1a79e",
+          "#c0c5bd",
+          "#dfe3dd",
+          "#f5f7f4"
+        ]
+      },
+      "warning": {
+        "role": "secondary",
+        "displayName": "Operational Amber",
+        "canonical": "#d08a18",
+        "tonalRamp": [
+          "#2f1b00",
+          "#583300",
+          "#824e03",
+          "#aa6b0b",
+          "#d08a18",
+          "#e6aa4f",
+          "#f4cc91",
+          "#fff0d0"
+        ]
+      },
+      "warning-dark": {
+        "role": "secondary",
+        "displayName": "Dark Amber",
+        "canonical": "#7a4a05",
+        "tonalRamp": [
+          "#261500",
+          "#402500",
+          "#5c3701",
+          "#7a4a05",
+          "#9b651d",
+          "#ba8647",
+          "#d8ad7c",
+          "#f5ddbe"
+        ]
+      },
+      "warning-soft": {
+        "role": "secondary",
+        "displayName": "Amber Wash",
+        "canonical": "#fff7e5",
+        "tonalRamp": [
+          "#2d2617",
+          "#4c422f",
+          "#6d614a",
+          "#8f8268",
+          "#b3a58a",
+          "#d2c6aa",
+          "#eee3c9",
+          "#fff7e5"
+        ]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Clear Red",
+        "canonical": "#c4473a",
+        "tonalRamp": [
+          "#32100d",
+          "#58201b",
+          "#7d3028",
+          "#a13f34",
+          "#c4473a",
+          "#db7165",
+          "#eba59c",
+          "#f9d9d5"
+        ]
+      },
+      "danger-dark": {
+        "role": "tertiary",
+        "displayName": "Dark Red",
+        "canonical": "#8d2d24",
+        "tonalRamp": [
+          "#2b0c09",
+          "#491612",
+          "#69211b",
+          "#8d2d24",
+          "#ae4a40",
+          "#ca7168",
+          "#e3a19a",
+          "#f6d8d4"
+        ]
+      },
+      "danger-soft": {
+        "role": "tertiary",
+        "displayName": "Red Wash",
+        "canonical": "#fff0ee",
+        "tonalRamp": [
+          "#2d2220",
+          "#4e3b38",
+          "#705653",
+          "#927470",
+          "#b69691",
+          "#d4b7b3",
+          "#ecd7d4",
+          "#fff0ee"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Page Title",
+        "purpose": "Top-level administrator workspace headings."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Major subsection and placeholder headings."
+      },
+      "title": {
+        "displayName": "Section Title",
+        "purpose": "Card and panel headings."
+      },
+      "body": {
+        "displayName": "Operational Body",
+        "purpose": "Controls, descriptions, tables, and working copy."
+      },
+      "control": {
+        "displayName": "Control Label",
+        "purpose": "Semibold labels inside buttons and compact interactive controls."
+      },
+      "label": {
+        "displayName": "Compact Label",
+        "purpose": "Metadata, badges, eyebrows, and supporting detail."
+      }
+    },
+    "shadows": [
+      {
+        "name": "subtle-lift",
+        "value": "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        "purpose": "Small floating controls only."
+      },
+      {
+        "name": "drawer-edge",
+        "value": "0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)",
+        "purpose": "Right-side drawers and major transient panels."
+      }
+    ],
+    "motion": [
+      {
+        "name": "color-state",
+        "value": "150ms ease",
+        "purpose": "Button, navigation, and field color or focus changes."
+      }
+    ],
+    "breakpoints": [
+      { "name": "minimum-shell", "value": "1024px" },
+      { "name": "sm", "value": "640px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The default action for progressing or saving an administrator decision.",
+      "html": "<button class=\"ds-btn-primary\">Add Absence</button>",
+      "css": ".ds-btn-primary { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; border: 0; border-radius: 6px; background: var(--brand-dark, #557129); color: #fff; font: 600 14px/20px Inter, ui-sans-serif, system-ui, sans-serif; transition: background-color 150ms; } .ds-btn-primary:hover { background: #4a6422; } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 2px #fff, 0 0 0 4px color-mix(in srgb, var(--brand, #7ea243) 40%, transparent); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A bordered action for alternate or lower-emphasis workflow steps.",
+      "html": "<button class=\"ds-btn-secondary\">Review &amp; Finalize</button>",
+      "css": ".ds-btn-secondary { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; border: 1px solid var(--border, #dfe3dd); border-radius: 6px; background: #fff; color: var(--foreground, #262a25); font: 600 14px/20px Inter, ui-sans-serif, system-ui, sans-serif; transition: background-color 150ms; } .ds-btn-secondary:hover { background: var(--muted, #f1f2ef); } .ds-btn-secondary:focus-visible { outline: none; box-shadow: 0 0 0 2px #fff, 0 0 0 4px color-mix(in srgb, var(--brand, #7ea243) 40%, transparent); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "description": "A quiet utility action that gains a surface only on interaction.",
+      "html": "<button class=\"ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn-ghost { min-height: 36px; padding: 0 14px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground, #687067); font: 600 14px/20px Inter, ui-sans-serif, system-ui, sans-serif; transition: color 150ms, background-color 150ms; } .ds-btn-ghost:hover { background: var(--muted, #f1f2ef); color: var(--foreground, #262a25); } .ds-btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand, #7ea243) 40%, transparent); }"
+    },
+    {
+      "name": "Destructive Button",
+      "kind": "button",
+      "description": "A clearly labeled irreversible or destructive administrator action.",
+      "html": "<button class=\"ds-btn-danger\">Delete</button>",
+      "css": ".ds-btn-danger { min-height: 36px; padding: 0 14px; border: 0; border-radius: 6px; background: var(--danger, #c4473a); color: #fff; font: 600 14px/20px Inter, ui-sans-serif, system-ui, sans-serif; transition: background-color 150ms; } .ds-btn-danger:hover { background: var(--danger-dark, #8d2d24); } .ds-btn-danger:focus-visible { outline: none; box-shadow: 0 0 0 2px #fff, 0 0 0 4px color-mix(in srgb, var(--danger, #c4473a) 40%, transparent); }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "The standard compact field for settings and operational entry.",
+      "html": "<label class=\"ds-field-label\">School name<input class=\"ds-field\" value=\"Fictional Academy\"></label>",
+      "css": ".ds-field-label { display: grid; gap: 6px; color: var(--foreground, #262a25); font: 600 14px/20px Inter, ui-sans-serif, system-ui, sans-serif; } .ds-field { width: 100%; height: 36px; box-sizing: border-box; border: 1px solid var(--border, #dfe3dd); border-radius: 6px; background: #fff; padding: 0 10px; color: var(--foreground, #262a25); font: 400 14px/20px Inter, ui-sans-serif, system-ui, sans-serif; transition: border-color 150ms, box-shadow 150ms; } .ds-field:focus-visible { outline: none; border-color: var(--brand, #7ea243); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand, #7ea243) 30%, transparent); }"
+    },
+    {
+      "name": "Success Badge",
+      "kind": "chip",
+      "description": "A compact status label for positive or completed states.",
+      "html": "<span class=\"ds-badge-success\">Assigned</span>",
+      "css": ".ds-badge-success { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--brand, #7ea243) 30%, transparent); border-radius: 9999px; background: var(--brand-soft, #eff5e7); color: var(--brand-dark, #557129); font: 500 12px/16px Inter, ui-sans-serif, system-ui, sans-serif; }"
+    },
+    {
+      "name": "Primary Navigation Item",
+      "kind": "nav",
+      "description": "A left-rail destination with a quiet default and tinted active state.",
+      "html": "<a class=\"ds-nav-item\" aria-current=\"page\" href=\"#\"><svg aria-hidden=\"true\" viewBox=\"0 0 24 24\"><path d=\"M9 11h6M9 15h4M9 7h6M5 3h14v18H5z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg><span>Sub Plan</span><span aria-hidden=\"true\">›</span></a>",
+      "css": ".ds-nav-item { height: 36px; display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 12px; padding: 0 12px; border-radius: 6px; background: var(--brand-soft, #eff5e7); color: var(--brand-dark, #557129); text-decoration: none; font: 500 14px/20px Inter, ui-sans-serif, system-ui, sans-serif; transition: background-color 150ms, color 150ms; } .ds-nav-item svg { width: 16px; height: 16px; } .ds-nav-item:hover { background: var(--muted, #f1f2ef); color: var(--foreground, #262a25); } .ds-nav-item:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand, #7ea243) 40%, transparent); }"
+    },
+    {
+      "name": "Operational Metric Card",
+      "kind": "card",
+      "description": "A compact count and label used in the daily planning summary.",
+      "html": "<div class=\"ds-metric-card\"><span>Unresolved</span><strong>0</strong></div>",
+      "css": ".ds-metric-card { min-width: 150px; display: grid; gap: 4px; padding: 12px 16px; border: 1px solid var(--border, #dfe3dd); border-radius: 8px; background: #fff; color: var(--foreground, #262a25); font-family: Inter, ui-sans-serif, system-ui, sans-serif; } .ds-metric-card span { color: var(--muted-foreground, #687067); font-size: 12px; line-height: 16px; } .ds-metric-card strong { font-size: 20px; line-height: 28px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "School Operations Desk",
+    "overview": "The interface should feel like a well-kept administrator's desk at the start of a busy school day: calm enough to reduce pressure, compact enough to keep related facts in view, and utilitarian enough that every control earns its place. Warm neutral surfaces keep the workspace approachable, while green accents connect actions and active states to the product identity without turning the screen into decoration. The system favors trustworthy structure over spectacle. Thin borders, steady alignment, short labels, and predictable controls let administrators scan quickly and act with confidence. Its incumbent character is calm, compact, utilitarian, warm, and trustworthy. The descriptive palette names capture the current implementation; they are not permanent brand constraints. During an overhaul, semantic roles and contrast treatments may evolve when evidence supports a clearer or more accessible system.",
+    "keyCharacteristics": [
+      "Compact laptop-first workspaces with clear operational hierarchy.",
+      "Warm gray-green neutrals and one restrained accent family.",
+      "Flat, border-led surfaces with shadow reserved for overlays.",
+      "Direct controls, short labels, and visible state language.",
+      "Accessible contrast and status cues that never depend on color alone."
+    ],
+    "rules": [
+      {
+        "name": "The Evolving Token Rule",
+        "body": "Apple Green, Deep Moss, Pale Leaf, and Warm Paper are descriptive names for the incumbent tokens. Preserve their current meaning when extending this system, but allow an explicitly approved overhaul to improve semantic roles or contrast.",
+        "section": "colors"
+      },
+      {
+        "name": "The Contrast-Safe Action Rule",
+        "body": "Use the darker green treatment for filled controls with small white text. Raw Apple Green remains an accent unless the foreground treatment passes the required contrast.",
+        "section": "colors"
+      },
+      {
+        "name": "The Semantic Color Rule",
+        "body": "Amber communicates warning and red communicates danger. Never reuse those colors as decorative categories.",
+        "section": "colors"
+      },
+      {
+        "name": "The Operational Scale Rule",
+        "body": "Keep the hierarchy compressed: 24px is the normal page-title ceiling, and most working content stays between 12px and 16px.",
+        "section": "typography"
+      },
+      {
+        "name": "The Weight-Before-Size Rule",
+        "body": "Prefer weight and spacing to large jumps in type size when raising emphasis inside dense workspaces.",
+        "section": "typography"
+      },
+      {
+        "name": "The Work-in-View Rule",
+        "body": "Prefer arrangements that keep dates, status, filters, and the current decision area visible together on a laptop screen.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat-by-Default Rule",
+        "body": "A surface at rest uses a border and tonal contrast, not a shadow. Add depth only when the interaction introduces a real layer.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Radius Ladder Rule",
+        "body": "Use 6px for controls, 8px for containers, 12px only for unusually prominent compositions, and a full pill only for compact status or filter labels.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Decision Clarity Rule",
+        "body": "Every state-changing control must pair its visual treatment with explicit action text, status text, or an icon with an accessible label.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "**Do** keep the current task, date, status, and next action visible together when space allows.",
+      "**Do** use borders and quiet tonal fills to organize resting surfaces.",
+      "**Do** use the Apple Green family sparingly for identity, selection, and action emphasis.",
+      "**Do** use Deep Moss for small white-on-green controls when contrast requires the darker treatment.",
+      "**Do** pair status color with text or an icon and preserve visible keyboard focus.",
+      "**Do** keep routine controls near the 36px height and the 12–14px type range."
+    ],
+    "donts": [
+      "**Don't** treat the descriptive token names as permanent constraints during an explicitly approved overhaul.",
+      "**Don't** use raw Apple Green behind small white text without verifying contrast.",
+      "**Don't** use brand green as a schedule category color.",
+      "**Don't** add shadows to ordinary cards, tables, or navigation rows.",
+      "**Don't** inflate the hierarchy with oversized display type or spacious marketing-page rhythms.",
+      "**Don't** communicate warning, danger, Assigned, or Unresolved states through color alone."
+    ]
+  }
+}
