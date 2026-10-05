@@ -5,3 +5,5 @@ package-lock.json
 LICENSE
 AGENTS.md
 docs/
+.github/skills/impeccable/
+.github/agents/impeccable-*.agent.md
