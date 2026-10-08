@@ -343,6 +343,8 @@ The modal Resolve Sub Need drawer separates persistent need/Default context and 
 
 Split drafts remain owned by one editor. All segment summaries retain staff selections; only the active interval renders a candidate picker. Candidate responses are indexed by draft segment identity and exact interval, with obsolete requests aborted. Boundary edits invalidate interval evidence without discarding staff selections; failed requests can be retried in place. The existing server structural/conflict validation and single split acknowledgement remain authoritative. Full-Assignment candidate previews refresh on the plan's structured revision, including shared-duty edits that retain the drawer.
 
+While split editing is active, global candidate-source and alternate-resolution controls are hidden. Successful Save returns to resolution selection; failed Save retains the draft. Cancel intentionally discards the draft without confirmation. Closing the drawer or clicking its backdrop requires explicit discard confirmation while the split editor is open, including an incomplete draft; all drawer exits are blocked during a save.
+
 The Daily Sub Plan table groups responsibility type with its description and allocates the remaining columns proportionally, with overflow contained inside its work surface. Drawer opening does not remount the table or reset filters/sort; background document scrolling is suspended and restored on close. Finalized drawers show the recorded choice with disabled clear controls and omit editing routes. Systemic focus containment, Escape, and return-focus behavior remain tracked separately in #45.
 
 ## When this document changes

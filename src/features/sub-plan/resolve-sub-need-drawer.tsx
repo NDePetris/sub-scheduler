@@ -243,11 +243,21 @@ export function ResolveSubNeedDrawer({
     }
   }
 
+  function closeDrawer() {
+    if (busy) return;
+    if (
+      splitOpen &&
+      !window.confirm('Discard the unsaved split draft and close?')
+    )
+      return;
+    onClose();
+  }
+
   return (
     <div
       className="fixed inset-0 z-40 bg-black/20"
       role="presentation"
-      onMouseDown={onClose}
+      onMouseDown={closeDrawer}
     >
       <aside
         role="dialog"
@@ -268,7 +278,8 @@ export function ResolveSubNeedDrawer({
           <Button
             variant="ghost"
             size="icon"
-            onClick={onClose}
+            onClick={closeDrawer}
+            disabled={busy}
             aria-label="Close"
           >
             <X className="size-4" />
@@ -310,7 +321,7 @@ export function ResolveSubNeedDrawer({
             </p>
           )}
         </div>
-        {!readOnly && (
+        {!readOnly && !splitOpen && (
           <div
             className="border-border flex shrink-0 gap-2 border-b px-5 py-2"
             aria-label="Candidate source"
@@ -672,7 +683,10 @@ export function ResolveSubNeedDrawer({
                     snapMinutes={detail.settings.splitSnapMinutes}
                     onBusyChange={setBusy}
                     onCancel={() => setSplitOpen(false)}
-                    onChange={onChange}
+                    onChange={(nextDetail) => {
+                      setSplitOpen(false);
+                      onChange(nextDetail);
+                    }}
                   />
                 )}
               </section>
@@ -715,7 +729,7 @@ export function ResolveSubNeedDrawer({
             )}
           </fieldset>
         </div>
-        {!readOnly && (
+        {!readOnly && !splitOpen && (
           <footer
             className="border-border shrink-0 border-t bg-white px-5 py-3"
             aria-label="Alternate resolutions"

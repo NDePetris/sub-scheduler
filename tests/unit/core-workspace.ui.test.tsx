@@ -44,6 +44,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
+  vi.restoreAllMocks();
 });
 function drawer(index = 1, plan = detail) {
   const onChange = vi.fn();
@@ -245,6 +246,111 @@ describe('Resolve Sub Need', () => {
   });
 });
 describe('Dedicated split editor', () => {
+  it('hides global mode controls until intentional Cancel, then opens a fresh draft', async () => {
+    await split();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Select Morgan Ellis' }),
+    );
+    fireEvent.change(screen.getByLabelText('Segment 1 ends at'), {
+      target: { value: '08:30' },
+    });
+    expect(screen.queryByLabelText('Candidate source')).toBeNull();
+    expect(screen.queryByLabelText('Alternate resolutions')).toBeNull();
+    // The interval's own candidate-source controls must remain usable.
+    fireEvent.click(screen.getByRole('button', { name: 'Other Staff' }));
+    await screen.findByRole('button', { name: 'Select Theo Wallace' });
+    expect(
+      screen.getByRole('button', { name: /Segment 1 ·/ }).textContent,
+    ).toContain('Morgan Ellis');
+    const confirm = vi.spyOn(window, 'confirm');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(api.resolveAssignment).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /Other Staff \(/ }));
+    expect(
+      screen.getByRole('textbox', { name: 'Search Other Staff' }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Combine Class' }));
+    expect(
+      screen.getByRole('button', { name: 'Save Combined Class' }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Split Assignment' }));
+    expect(
+      screen.getByLabelText<HTMLInputElement>('Segment 1 ends at').value,
+    ).toBe('08:40');
+    expect(
+      screen.getByRole('button', { name: /Segment 1 ·/ }).textContent,
+    ).not.toContain('Morgan Ellis');
+  });
+
+  it.each(['Close', 'backdrop'])(
+    'guards %s without losing selections or boundaries when exit is declined',
+    async (exit) => {
+      const onClose = vi.fn();
+      render(
+        <ResolveSubNeedDrawer
+          assignment={detail.assignments[1]}
+          detail={detail}
+          staff={staff}
+          onClose={onClose}
+          onChange={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Split Assignment' }));
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Select Morgan Ellis' }),
+      );
+      fireEvent.change(screen.getByLabelText('Segment 1 ends at'), {
+        target: { value: '08:30' },
+      });
+      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      const close = () =>
+        exit === 'Close'
+          ? fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+          : fireEvent.mouseDown(screen.getByRole('presentation'));
+      close();
+      expect(confirm).toHaveBeenCalledWith(
+        'Discard the unsaved split draft and close?',
+      );
+      expect(onClose).not.toHaveBeenCalled();
+      expect(
+        screen.getByRole('button', { name: /Segment 1 · 08:00–08:30/ })
+          .textContent,
+      ).toContain('Morgan Ellis');
+      expect(
+        screen.getByLabelText<HTMLInputElement>('Segment 1 ends at').value,
+      ).toBe('08:30');
+      confirm.mockReturnValue(true);
+      close();
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(api.resolveAssignment).not.toHaveBeenCalled();
+    },
+  );
+
+  it('returns to global resolution modes only after a successful split save', async () => {
+    await split();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Select Morgan Ellis' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Segment 2 ·/ }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Select Priya Nair' }),
+    );
+    api.resolveAssignment.mockRejectedValueOnce(new Error('Save failed'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Split' }));
+    await screen.findByText('Save failed');
+    expect(screen.queryByLabelText('Alternate resolutions')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: /Segment 2 ·/ }).textContent,
+    ).toContain('Priya Nair');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Split' }));
+    await screen.findByLabelText('Candidate source');
+    fireEvent.click(screen.getByRole('button', { name: 'Redistribute Class' }));
+    expect(
+      screen.getByRole('button', { name: 'Save Redistribution' }),
+    ).toBeTruthy();
+  });
+
   it('uses one picker, preserves drafts and sends fixed adjacent intervals', async () => {
     await split();
     expect(
