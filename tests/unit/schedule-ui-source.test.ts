@@ -75,12 +75,17 @@ describe('Daily Sub Plan resolution presentation source', () => {
     'utf8',
   );
 
+  const ledger = readFileSync(
+    'src/features/sub-plan/candidate-ledger.tsx',
+    'utf8',
+  );
+
   it('shows concise availability badges and contextual current/default state', () => {
     expect(drawer).toContain('Currently Chosen');
     expect(drawer).not.toContain('Not automatically available');
     expect(drawer).not.toContain('Default Sub Plan\n');
-    expect(drawer).toContain("candidate.availability === 'open'");
-    expect(drawer).toContain('candidate.isDefaultCandidate');
+    expect(ledger).toContain('candidate.availabilitySource');
+    expect(ledger).toContain('candidate.isDefaultCandidate');
     expect(workspace).toContain("assignment.assignedStaff && 'font-semibold'");
   });
 
@@ -91,13 +96,11 @@ describe('Daily Sub Plan resolution presentation source', () => {
     expect(workspace).toMatch(
       /assignmentLabel\(assignment\)[\s\S]*?assignment\.resolutionSource/,
     );
-    expect(drawer).toContain('Workload Warning');
-    expect(drawer).toMatch(
+    expect(ledger).toContain('Workload Warning');
+    expect(ledger).toMatch(
       /candidate\.projectedBurden !== null\s*&&\s*candidate\.projectedBurden >= candidate\.threshold/,
     );
-    expect(drawer).toContain(
-      'After assignment, {candidate.projectedBurden.toFixed(2)} Plan',
-    );
+    expect(ledger).toContain("candidate.projectedBurden?.toFixed(2) ?? '—'");
   });
 
   it('places confirmed bulk actions in the absent-teacher filter context', () => {

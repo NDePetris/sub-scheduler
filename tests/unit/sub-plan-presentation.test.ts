@@ -355,7 +355,7 @@ describe('Full Schedule timeline presentation', () => {
     });
   });
 
-  it('labels a not-covered duty without coverage rows', () => {
+  it('labels an intentionally uncovered duty without coverage rows', () => {
     const timeline = buildFullScheduleTimeline(
       detail({
         assignments: [
@@ -368,7 +368,7 @@ describe('Full Schedule timeline presentation', () => {
     );
 
     expect(row(timeline, 'smith').absenceOverlays[0]).toMatchObject({
-      label: 'Absent · Not Covered',
+      label: 'Absent · Intentionally Uncovered',
       tone: 'intentionally-uncovered',
     });
     expect(timeline.rows).toHaveLength(1);

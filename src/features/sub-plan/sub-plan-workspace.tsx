@@ -590,74 +590,81 @@ function AssignmentTable({
     );
   }
   return (
-    <table className="w-full table-fixed text-left text-sm">
-      <thead className="bg-muted/50 text-muted-foreground text-xs">
-        <tr>
-          <SortableHeader
-            className="w-32 px-4 py-2.5"
-            active={sort === 'time'}
-            onClick={() => onSort('time')}
-          >
-            Time
-          </SortableHeader>
-          <SortableHeader
-            className="w-44 px-3 py-2.5"
-            active={sort === 'teacher'}
-            onClick={() => onSort('teacher')}
-          >
-            Absent Teacher
-          </SortableHeader>
-          <th className="w-28 px-3 py-2.5">Type</th>
-          <th className="w-[22rem] px-3 py-2.5">Class / Responsibility</th>
-          <th className="w-72 px-3 py-2.5">Assigned</th>
-          <th className="w-36 px-3 py-2.5">Status</th>
-        </tr>
-      </thead>
-      <tbody className="divide-border divide-y">
-        {assignments.map((assignment) => (
-          <tr
-            key={assignment.id}
-            tabIndex={0}
-            role="button"
-            onClick={() => onOpen(assignment.id)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ')
-                onOpen(assignment.id);
-            }}
-            className="hover:bg-muted/40 focus:bg-brand-soft cursor-pointer focus:outline-none"
-          >
-            <td className="px-4 py-3 font-mono text-xs">
-              {assignment.startTime}–{assignment.endTime}
-            </td>
-            <td className="px-3 py-3 font-semibold">
-              {assignment.absentStaff.displayName}
-            </td>
-            <td className="px-3 py-3 capitalize">
-              {assignment.responsibilityType.replace('_', ' ')}
-            </td>
-            <td className="px-3 py-3" title={assignment.description}>
-              <span className="block truncate">
-                {affectedNeedDescription(
-                  assignment.description,
-                  assignment.room,
-                )}
-              </span>
-              {formatRoomLabel(assignment.room) && (
-                <span className="text-muted-foreground block truncate text-xs">
-                  {formatRoomLabel(assignment.room)}
-                </span>
-              )}
-            </td>
-            <td className="px-3 py-3">
-              <AssignedCell assignment={assignment} />
-            </td>
-            <td className="px-3 py-3">
-              <StatusBadge status={assignment.status} />
-            </td>
+    <div
+      className="max-w-full overflow-x-auto"
+      role="region"
+      aria-label="Daily Sub Plan Assignments"
+      tabIndex={0}
+    >
+      <table className="w-full min-w-[700px] table-fixed text-left text-sm">
+        <thead className="bg-muted/50 text-muted-foreground text-xs">
+          <tr>
+            <SortableHeader
+              className="w-[14%] px-2 py-2.5"
+              active={sort === 'time'}
+              onClick={() => onSort('time')}
+            >
+              Time
+            </SortableHeader>
+            <SortableHeader
+              className="w-[18%] px-2 py-2.5"
+              active={sort === 'teacher'}
+              onClick={() => onSort('teacher')}
+            >
+              Absent Teacher
+            </SortableHeader>
+            <th className="w-[32%] px-2 py-2.5">Class / Responsibility</th>
+            <th className="w-[20%] px-2 py-2.5">Assigned</th>
+            <th className="w-[16%] px-2 py-2.5">Status</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody className="divide-border divide-y">
+          {assignments.map((assignment) => (
+            <tr
+              key={assignment.id}
+              tabIndex={0}
+              role="button"
+              onClick={() => onOpen(assignment.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  onOpen(assignment.id);
+                }
+              }}
+              className="hover:bg-muted/40 focus:bg-brand-soft cursor-pointer focus:outline-none"
+            >
+              <td className="px-2 py-3 text-xs whitespace-nowrap tabular-nums">
+                {assignment.startTime}–{assignment.endTime}
+              </td>
+              <td className="px-2 py-3 font-semibold wrap-anywhere">
+                {assignment.absentStaff.displayName}
+              </td>
+              <td
+                className="px-2 py-3 wrap-anywhere"
+                title={assignment.description}
+              >
+                <span className="block">
+                  {affectedNeedDescription(
+                    assignment.description,
+                    assignment.room,
+                  )}
+                </span>
+                <span className="text-muted-foreground block text-xs capitalize">
+                  {assignment.responsibilityType.replace('_', ' ')}
+                  {assignment.room && ` · ${formatRoomLabel(assignment.room)}`}
+                </span>
+              </td>
+              <td className="px-2 py-3 wrap-anywhere">
+                <AssignedCell assignment={assignment} />
+              </td>
+              <td className="px-2 py-3">
+                <StatusBadge status={assignment.status} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -1059,7 +1066,8 @@ function UncoveredDutiesDialog({
     <Modal title="Some duties do not have coverage" onClose={onBack}>
       <div className="space-y-4">
         <p className="text-muted-foreground text-sm">
-          Review the non-instructional Needs that will be marked Not Covered.
+          Review the non-instructional Needs that will be marked Intentionally
+          Uncovered.
         </p>
         <ul className="border-border divide-border divide-y rounded-md border">
           {assignments.map((assignment) => (
@@ -1080,7 +1088,7 @@ function UncoveredDutiesDialog({
             Back to Plan
           </Button>
           <Button disabled={busy} onClick={onContinue}>
-            Mark {assignments.length} Not Covered &amp; Continue
+            Mark {assignments.length} Intentionally Uncovered &amp; Continue
           </Button>
         </div>
       </div>
@@ -1607,7 +1615,8 @@ function StatusBadge({
         <Check className="size-3" /> Assigned
       </Badge>
     );
-  if (status === 'intentionally_uncovered') return <Badge>Not Covered</Badge>;
+  if (status === 'intentionally_uncovered')
+    return <Badge>Intentionally Uncovered</Badge>;
   return (
     <Badge variant="danger">
       <AlertTriangle className="size-3" /> Unresolved
@@ -1645,7 +1654,8 @@ function legacyAssignmentLabel(assignment: PlanAssignment): string {
   if (assignment.assignedStaff) return assignment.assignedStaff.displayName;
   if (assignment.segments.length)
     return assignment.segments.map((segment) => segment.staffName).join(' / ');
-  if (assignment.status === 'intentionally_uncovered') return 'Not Covered';
+  if (assignment.status === 'intentionally_uncovered')
+    return 'Intentionally Uncovered';
   if (assignment.resolutionType)
     return assignment.resolutionType.replaceAll('_', ' ');
   return '—';
