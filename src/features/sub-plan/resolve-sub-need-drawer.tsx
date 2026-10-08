@@ -1,5 +1,5 @@
-import { AlertTriangle, Search, Split, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Split, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ import {
   type StaffData,
 } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { CandidateLedger } from './candidate-ledger';
 
 export function ResolveSubNeedDrawer({
   assignment: initialAssignment,
@@ -50,6 +51,8 @@ export function ResolveSubNeedDrawer({
     initialAssignment;
   const [candidates, setCandidates] = useState<CandidatePreview[]>([]);
   const [candidateAssignmentId, setCandidateAssignmentId] = useState('');
+  const [candidateRetry, setCandidateRetry] = useState(0);
+  const candidateRequestKey = `${assignment.id}:${detail.plan.structuredRevision}:${candidateRetry}`;
   const [candidateError, setCandidateError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -58,6 +61,8 @@ export function ResolveSubNeedDrawer({
   >(null);
   const [otherStaffSearch, setOtherStaffSearch] = useState('');
   const [splitOpen, setSplitOpen] = useState(false);
+  const [showOtherStaff, setShowOtherStaff] = useState(false);
+  const readOnly = detail.plan.status === 'finalized';
   const [alternateEditor, setAlternateEditor] = useState<
     'combine' | 'redistribute' | null
   >(null);
@@ -80,21 +85,33 @@ export function ResolveSubNeedDrawer({
   const [confirmLeaveUncovered, setConfirmLeaveUncovered] = useState(false);
 
   useEffect(() => {
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = overflow;
+    };
+  }, []);
+
+  useEffect(() => {
     const controller = new AbortController();
     void getCandidates(assignment.id, { signal: controller.signal })
       .then((values) => {
+        if (controller.signal.aborted) return;
         setCandidates(values);
-        setCandidateAssignmentId(assignment.id);
+        setCandidateAssignmentId(candidateRequestKey);
         setCandidateError(null);
       })
       .catch((cause: unknown) => {
-        if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
+        if (
+          !controller.signal.aborted &&
+          !(cause instanceof DOMException && cause.name === 'AbortError')
+        ) {
           setCandidateError(errorMessage(cause));
-          setCandidateAssignmentId(assignment.id);
+          setCandidateAssignmentId(candidateRequestKey);
         }
       });
     return () => controller.abort();
-  }, [assignment.id]);
+  }, [assignment.id, candidateRequestKey]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -136,7 +153,7 @@ export function ResolveSubNeedDrawer({
     });
   }, [candidates, otherStaffSearch]);
   const otherStaffCount = candidates.length - recommended.length;
-  const candidatesLoading = candidateAssignmentId !== assignment.id;
+  const candidatesLoading = candidateAssignmentId !== candidateRequestKey;
 
   const concurrentCombineEntries = useMemo(() => {
     const activeStaffIds = new Set(staff.map((person) => person.id));
@@ -161,6 +178,12 @@ export function ResolveSubNeedDrawer({
     if (!next) return;
     setRoomId(next.roomId === next.scheduledRoomId ? '' : (next.roomId ?? ''));
     setNote(assignmentNote(next.resolutionDetails) ?? '');
+    setConfirmingCandidateId(null);
+    setPendingOverride(null);
+    setActionError(null);
+    setAlternateEditor(null);
+    setConfirmLeaveUncovered(false);
+    setRedistributionStaffIds(redistributionIds(next.resolutionDetails));
     setActiveAssignmentId(assignmentId);
   }
 
@@ -168,6 +191,7 @@ export function ResolveSubNeedDrawer({
     input: AssignmentResolutionInput,
     targetAssignmentId = assignment.id,
   ) {
+    if (readOnly || busy) return;
     setBusy(true);
     setActionError(null);
     setPendingOverride(null);
@@ -202,6 +226,8 @@ export function ResolveSubNeedDrawer({
   }
 
   function openAlternateEditor(value: 'combine' | 'redistribute') {
+    setSplitOpen(false);
+    setConfirmLeaveUncovered(false);
     setAlternateEditor(value);
     setPendingOverride(null);
     setActionError(null);
@@ -228,7 +254,7 @@ export function ResolveSubNeedDrawer({
         aria-modal="true"
         aria-labelledby="resolve-title"
         onMouseDown={(event) => event.stopPropagation()}
-        className="border-border absolute inset-y-0 right-0 w-[580px] overflow-y-auto border-l bg-white shadow-xl"
+        className="border-border absolute inset-y-0 right-0 flex w-[min(100vw,calc(520px+15.625vw))] max-w-[800px] flex-col overflow-hidden border-l bg-white shadow-xl"
       >
         <div className="border-border sticky top-0 z-10 flex items-center justify-between border-b bg-white px-5 py-4">
           <div>
@@ -249,132 +275,196 @@ export function ResolveSubNeedDrawer({
           </Button>
         </div>
 
-        <div className="space-y-5 p-5">
-          {actionError && <ErrorBanner message={actionError} />}
-          {pendingOverride && (
-            <div className="border-danger/30 bg-danger-soft rounded-md border p-3">
-              <p className="text-danger-dark text-sm font-bold">
-                This choice has an operational conflict.
-              </p>
-              <p className="mt-1 text-xs">
-                Review the warning above, then explicitly acknowledge it to save
-                this resolution.
-              </p>
-              <div className="mt-3 flex justify-end gap-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setPendingOverride(null)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => void act(pendingOverride)}
-                >
-                  Assign Anyway
-                </Button>
-              </div>
+        <div
+          className="border-border bg-muted/40 shrink-0 border-b px-5 py-3"
+          data-need-context
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="font-bold">{assignment.absentStaff.displayName}</p>
+            <p className="text-sm tabular-nums">
+              {assignment.startTime}–{assignment.endTime} ·{' '}
+              {formatRoomLabel(assignment.room) ?? 'No room'}
+            </p>
+          </div>
+          <p className="mt-1 text-sm wrap-anywhere">
+            {assignment.description}{' '}
+            <span className="text-muted-foreground">
+              · {assignment.responsibilityType.replace('_', ' ')}
+            </span>
+          </p>
+          {assignment.defaultAction && (
+            <div className="mt-2 text-xs" role="status">
+              <span className="font-semibold">Default Sub Plan: </span>
+              {assignment.defaultAction.staffName ??
+                assignment.defaultAction.actionType.replaceAll('_', ' ')}
+              {assignment.conflictExplanation && (
+                <span className="text-danger-dark mt-1 block">
+                  Default unavailable: {assignment.conflictExplanation}
+                </span>
+              )}
             </div>
           )}
-          <section className="bg-muted grid grid-cols-2 gap-x-5 gap-y-3 rounded-lg p-4 text-sm">
-            <Data
-              label="Time"
-              value={`${assignment.startTime}–${assignment.endTime}`}
-            />
-            <Data
-              label="Absent Teacher"
-              value={assignment.absentStaff.displayName}
-            />
-            <Data
-              label="Type"
-              value={assignment.responsibilityType.replace('_', ' ')}
-            />
-            <Data label="Room" value={assignment.room ?? '—'} />
-            <div className="col-span-2">
-              <Data
-                label="Class / Responsibility"
-                value={assignment.description}
-              />
-            </div>
-          </section>
-
-          {assignment.sharedDutyStaffing ? (
-            <SharedDutyStaffing
-              staffing={assignment.sharedDutyStaffing}
-              activeAssignmentId={assignment.id}
-              busy={busy}
-              onSelect={selectAssignment}
-              onClear={(assignmentId) =>
-                void act({ action: 'clear_resolution' }, assignmentId)
+          {readOnly && (
+            <p className="mt-2 text-sm font-semibold" role="status">
+              Finalized · Read only. Reopen the Sub Plan to edit Assignments.
+            </p>
+          )}
+        </div>
+        {!readOnly && (
+          <div
+            className="border-border flex shrink-0 gap-2 border-b px-5 py-2"
+            aria-label="Candidate source"
+          >
+            <Button
+              size="sm"
+              variant={
+                !showOtherStaff && !splitOpen && !alternateEditor
+                  ? 'primary'
+                  : 'secondary'
               }
-            />
-          ) : assignment.status !== 'unresolved' ? (
-            <div className="space-y-2">
-              <CurrentChoice assignment={assignment} />
-              {hasPrimaryResolution(assignment) && (
-                <div className="flex justify-end">
+              disabled={busy}
+              aria-pressed={!showOtherStaff && !splitOpen && !alternateEditor}
+              onClick={() => {
+                setShowOtherStaff(false);
+                setSplitOpen(false);
+                setAlternateEditor(null);
+                setConfirmLeaveUncovered(false);
+              }}
+            >
+              Recommended ({recommended.length})
+            </Button>
+            <Button
+              size="sm"
+              variant={
+                showOtherStaff && !splitOpen && !alternateEditor
+                  ? 'primary'
+                  : 'secondary'
+              }
+              disabled={busy}
+              aria-pressed={showOtherStaff && !splitOpen && !alternateEditor}
+              onClick={() => {
+                setShowOtherStaff(true);
+                setSplitOpen(false);
+                setAlternateEditor(null);
+                setConfirmLeaveUncovered(false);
+              }}
+            >
+              Other Staff ({otherStaffCount})
+            </Button>
+          </div>
+        )}
+        <div
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5"
+          data-decision-body
+        >
+          <fieldset disabled={readOnly || busy} className="min-w-0 space-y-5">
+            {actionError && <ErrorBanner message={actionError} />}
+            {pendingOverride && (
+              <div className="border-danger/30 bg-danger-soft rounded-md border p-3">
+                <p className="text-danger-dark text-sm font-bold">
+                  This choice has an operational conflict.
+                </p>
+                <p className="mt-1 text-xs">
+                  Review the warning above, then explicitly acknowledge it to
+                  save this resolution.
+                </p>
+                <div className="mt-3 flex justify-end gap-2">
                   <Button
+                    size="sm"
                     variant="secondary"
+                    onClick={() => setPendingOverride(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
                     size="sm"
                     disabled={busy}
-                    onClick={() => void act({ action: 'clear_resolution' })}
+                    onClick={() => void act(pendingOverride)}
                   >
-                    Clear Resolution
+                    Assign Anyway
                   </Button>
                 </div>
-              )}
-            </div>
-          ) : null}
+              </div>
+            )}
 
-          <section aria-labelledby="assign-a-sub-title">
-            <div>
-              <h3 id="assign-a-sub-title" className="text-base font-bold">
-                Assign a Sub
-              </h3>
-              {assignment.sharedDutyStaffing && (
-                <p className="text-foreground mt-0.5 text-xs font-semibold">
-                  Replacement position for{' '}
-                  {
-                    assignment.sharedDutyStaffing.positions.find(
-                      (position) => position.assignmentId === assignment.id,
-                    )?.scheduledStaff.displayName
+            {!splitOpen &&
+              !alternateEditor &&
+              (assignment.sharedDutyStaffing ? (
+                <SharedDutyStaffing
+                  staffing={assignment.sharedDutyStaffing}
+                  activeAssignmentId={assignment.id}
+                  busy={busy || readOnly}
+                  onSelect={selectAssignment}
+                  onClear={(assignmentId) =>
+                    void act({ action: 'clear_resolution' }, assignmentId)
                   }
-                </p>
-              )}
-              <p className="text-muted-foreground mt-0.5 text-xs">
-                Recommended staff are automatically available and ordered by
-                preference, then recent Plan Periods Lost.
-              </p>
-              {assignment.status === 'unresolved' &&
-                assignment.defaultAction &&
-                assignment.conflictExplanation && (
-                  <p className="text-danger-dark mt-2 flex gap-1.5 text-xs">
-                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-                    Default unavailable: {assignment.conflictExplanation}
-                  </p>
-                )}
-            </div>
+                />
+              ) : assignment.status !== 'unresolved' ? (
+                <div className="space-y-2">
+                  <CurrentChoice assignment={assignment} />
+                  {hasPrimaryResolution(assignment) && (
+                    <div className="flex justify-end">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy || readOnly}
+                        onClick={() => void act({ action: 'clear_resolution' })}
+                      >
+                        Clear Resolution
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ) : null)}
 
-            <div className="mt-3 space-y-3" aria-busy={candidatesLoading}>
-              <h4 className="text-muted-foreground text-xs font-bold tracking-wide uppercase">
-                Recommended
-              </h4>
-              {candidatesLoading ? (
-                <CandidateSkeleton />
-              ) : candidateError ? (
-                <ErrorBanner message={candidateError} />
-              ) : recommended.length > 0 ? (
-                <div className="border-border divide-border divide-y overflow-hidden rounded-md border">
-                  {recommended.map((candidate) => (
-                    <CandidateCard
-                      key={candidate.id}
-                      candidate={candidate}
+            {!readOnly &&
+              !splitOpen &&
+              !alternateEditor &&
+              !confirmLeaveUncovered && (
+                <section aria-labelledby="assign-a-sub-title">
+                  <h3 id="assign-a-sub-title" className="font-bold">
+                    {showOtherStaff ? 'Other Staff' : 'Assign a Sub'}
+                  </h3>
+                  <p className="text-muted-foreground mt-1 mb-3 text-xs">
+                    Default → School Sub → PLAN / Admin / Available → Manual.
+                    Recent Plan Periods Lost orders comparable candidates.
+                  </p>
+                  {showOtherStaff && (
+                    <label className="mb-3 block text-xs font-semibold">
+                      Search Other Staff
+                      <input
+                        className="field mt-1"
+                        value={otherStaffSearch}
+                        onChange={(event) =>
+                          setOtherStaffSearch(event.target.value)
+                        }
+                        placeholder="Name, availability, or conflict"
+                      />
+                    </label>
+                  )}
+                  {candidatesLoading ? (
+                    <CandidateSkeleton />
+                  ) : candidateError ? (
+                    <div className="space-y-2">
+                      <ErrorBanner message={candidateError} />
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          setCandidateAssignmentId('');
+                          setCandidateRetry((value) => value + 1);
+                        }}
+                      >
+                        Retry candidates
+                      </Button>
+                    </div>
+                  ) : (
+                    <CandidateLedger
+                      candidates={showOtherStaff ? otherStaff : recommended}
                       busy={busy}
-                      confirming={confirmingCandidateId === candidate.id}
-                      onRequestAssign={() =>
-                        candidate.conflicts.length > 0
+                      confirmingId={confirmingCandidateId}
+                      onSelect={(candidate) =>
+                        candidate.conflicts.length
                           ? setConfirmingCandidateId(candidate.id)
                           : void act({
                               action: 'assign',
@@ -382,8 +472,8 @@ export function ResolveSubNeedDrawer({
                               assignAnyway: false,
                             })
                       }
-                      onCancelOverride={() => setConfirmingCandidateId(null)}
-                      onConfirmOverride={() => {
+                      onCancel={() => setConfirmingCandidateId(null)}
+                      onConfirm={(candidate) => {
                         setConfirmingCandidateId(null);
                         void act({
                           action: 'assign',
@@ -392,204 +482,211 @@ export function ResolveSubNeedDrawer({
                         });
                       }}
                     />
-                  ))}
-                </div>
-              ) : (
-                <p className="border-border text-muted-foreground rounded-md border border-dashed p-3 text-sm">
-                  No staff are automatically available for the full Assignment.
-                  Check Other Staff to make an override.
-                </p>
+                  )}
+                </section>
               )}
 
-              {!candidatesLoading && !candidateError && otherStaffCount > 0 && (
-                <details className="border-border rounded-md border">
-                  <summary className="hover:bg-muted/40 cursor-pointer px-3 py-2.5 text-sm font-semibold">
-                    Other Staff ({otherStaffCount})
-                  </summary>
-                  <div className="border-border border-t p-3">
-                    <label className="border-border mb-3 flex h-8 items-center gap-2 rounded-md border bg-white px-2">
-                      <Search className="text-muted-foreground size-3.5" />
-                      <span className="sr-only">Search Other Staff</span>
-                      <input
-                        value={otherStaffSearch}
-                        onChange={(event) =>
-                          setOtherStaffSearch(event.target.value)
-                        }
-                        placeholder="Search Other Staff"
-                        className="w-full bg-transparent text-xs outline-none"
-                      />
-                    </label>
-                    {otherStaff.length > 0 ? (
-                      <div className="border-border divide-border divide-y overflow-hidden rounded-md border">
-                        {otherStaff.map((candidate) => (
-                          <CandidateCard
-                            key={candidate.id}
-                            candidate={candidate}
-                            busy={busy}
-                            confirming={confirmingCandidateId === candidate.id}
-                            onRequestAssign={() =>
-                              candidate.conflicts.length > 0
-                                ? setConfirmingCandidateId(candidate.id)
-                                : void act({
-                                    action: 'assign',
-                                    staffId: candidate.id,
-                                    assignAnyway: false,
-                                  })
-                            }
-                            onCancelOverride={() =>
-                              setConfirmingCandidateId(null)
-                            }
-                            onConfirmOverride={() => {
-                              setConfirmingCandidateId(null);
-                              void act({
-                                action: 'assign',
-                                staffId: candidate.id,
-                                assignAnyway: true,
-                              });
+            {!readOnly && (
+              <section>
+                {alternateEditor && (
+                  <div className="border-border mt-3 space-y-3 rounded-md border bg-white p-3">
+                    {alternateEditor === 'combine' ? (
+                      <Labeled label="Combine with">
+                        {concurrentCombineEntries.length > 0 ? (
+                          <select
+                            value={combineEntryId}
+                            onChange={(event) => {
+                              const entryId = event.target.value;
+                              setCombineEntryId(entryId);
+                              const target = concurrentCombineEntries.find(
+                                (entry) => entry.id === entryId,
+                              );
+                              if (
+                                assignment.roomId ===
+                                  assignment.scheduledRoomId &&
+                                target?.roomId
+                              )
+                                setRoomId(target.roomId);
                             }}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-muted-foreground text-xs">
-                        No staff match this search.
-                      </p>
-                    )}
-                  </div>
-                </details>
-              )}
-            </div>
-          </section>
-
-          <section className="bg-muted/40 border-border space-y-2 rounded-lg border p-4">
-            <div>
-              <h3 className="text-sm font-bold">
-                Other ways to resolve this need
-              </h3>
-              <p className="text-muted-foreground mt-0.5 text-xs">
-                Use these less-common options when a normal sub assignment is
-                not the right fit.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setSplitOpen((value) => !value)}
-              >
-                <Split className="size-3.5" /> Split Assignment
-              </Button>
-              {assignment.responsibilityType === 'instruction' && (
-                <>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => openAlternateEditor('redistribute')}
-                  >
-                    Redistribute Class
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => openAlternateEditor('combine')}
-                  >
-                    Combine Class
-                  </Button>
-                </>
-              )}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => {
-                  const needsAck =
-                    assignment.responsibilityType === 'instruction';
-                  if (needsAck) {
-                    setConfirmLeaveUncovered(true);
-                  } else {
-                    void act({
-                      action: 'leave_uncovered',
-                      acknowledged: false,
-                    });
-                  }
-                }}
-              >
-                Mark Not Covered
-              </Button>
-            </div>
-            {alternateEditor && (
-              <div className="border-border mt-3 space-y-3 rounded-md border bg-white p-3">
-                {alternateEditor === 'combine' ? (
-                  <Labeled label="Combine with">
-                    {concurrentCombineEntries.length > 0 ? (
-                      <select
-                        value={combineEntryId}
-                        onChange={(event) => {
-                          const entryId = event.target.value;
-                          setCombineEntryId(entryId);
-                          const target = concurrentCombineEntries.find(
-                            (entry) => entry.id === entryId,
-                          );
-                          if (
-                            assignment.roomId === assignment.scheduledRoomId &&
-                            target?.roomId
-                          )
-                            setRoomId(target.roomId);
-                        }}
-                        className="field"
-                      >
-                        {concurrentCombineEntries.map((entry) => (
-                          <option key={entry.id} value={entry.id}>
-                            {entry.staffName} — {entry.description} ·{' '}
-                            {entry.startTime}–{entry.endTime}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="border-border text-muted-foreground block rounded-md border border-dashed p-3 text-sm font-normal">
-                        No concurrent instructional classes are available for
-                        this Assignment.
-                      </span>
-                    )}
-                  </Labeled>
-                ) : (
-                  <fieldset>
-                    <legend className="text-muted-foreground text-xs font-semibold">
-                      Redistribute to
-                    </legend>
-                    <div className="border-border mt-1 max-h-44 space-y-1 overflow-y-auto rounded-md border p-2">
-                      {staff
-                        .filter(
-                          (person) => person.id !== assignment.absentStaff.id,
-                        )
-                        .map((person) => (
-                          <label
-                            key={person.id}
-                            className="flex items-center gap-2 rounded px-1 py-1 text-sm"
+                            className="field"
                           >
-                            <input
-                              type="checkbox"
-                              checked={redistributionStaffIds.includes(
-                                person.id,
-                              )}
-                              onChange={(event) =>
-                                setRedistributionStaffIds((current) =>
-                                  event.target.checked
-                                    ? [...current, person.id]
-                                    : current.filter((id) => id !== person.id),
-                                )
-                              }
-                            />
-                            {person.displayName}
-                          </label>
-                        ))}
-                    </div>
-                    <p className="text-muted-foreground mt-1 text-xs">
-                      Choose at least two recipients. Equal split is used by
-                      default; no student data is recorded.
-                    </p>
-                  </fieldset>
-                )}
+                            {concurrentCombineEntries.map((entry) => (
+                              <option key={entry.id} value={entry.id}>
+                                {entry.staffName} — {entry.description} ·{' '}
+                                {entry.startTime}–{entry.endTime}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="border-border text-muted-foreground block rounded-md border border-dashed p-3 text-sm font-normal">
+                            No concurrent instructional classes are available
+                            for this Assignment.
+                          </span>
+                        )}
+                      </Labeled>
+                    ) : (
+                      <fieldset>
+                        <legend className="text-muted-foreground text-xs font-semibold">
+                          Redistribute to
+                        </legend>
+                        <div className="border-border mt-1 max-h-44 space-y-1 overflow-y-auto rounded-md border p-2">
+                          {staff
+                            .filter(
+                              (person) =>
+                                person.id !== assignment.absentStaff.id,
+                            )
+                            .map((person) => (
+                              <label
+                                key={person.id}
+                                className="flex items-center gap-2 rounded px-1 py-1 text-sm"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={redistributionStaffIds.includes(
+                                    person.id,
+                                  )}
+                                  onChange={(event) =>
+                                    setRedistributionStaffIds((current) =>
+                                      event.target.checked
+                                        ? [...current, person.id]
+                                        : current.filter(
+                                            (id) => id !== person.id,
+                                          ),
+                                    )
+                                  }
+                                />
+                                {person.displayName}
+                              </label>
+                            ))}
+                        </div>
+                        <p className="text-muted-foreground mt-1 text-xs">
+                          Choose at least two recipients. Equal split is used by
+                          default; no student data is recorded.
+                        </p>
+                      </fieldset>
+                    )}
 
+                    <AssignmentDetailsFields
+                      assignment={assignment}
+                      rooms={rooms}
+                      roomsLoading={roomsLoading}
+                      roomId={roomId}
+                      note={note}
+                      onRoomChange={setRoomId}
+                      onNoteChange={setNote}
+                    />
+
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={busy}
+                        onClick={() => {
+                          setAlternateEditor(null);
+                          setPendingOverride(null);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={
+                          busy ||
+                          (alternateEditor === 'combine'
+                            ? !combineEntryId
+                            : redistributionStaffIds.length < 2)
+                        }
+                        onClick={() =>
+                          void act(
+                            alternateEditor === 'combine'
+                              ? {
+                                  action: 'combine_class',
+                                  receivingScheduleEntryId: combineEntryId,
+                                  roomId: roomId || null,
+                                  note: note.trim() || null,
+                                  overrideAcknowledged: false,
+                                }
+                              : {
+                                  action: 'redistribute',
+                                  receivingStaffIds: redistributionStaffIds,
+                                  roomId: roomId || null,
+                                  note: note.trim() || null,
+                                  overrideAcknowledged: false,
+                                },
+                          )
+                        }
+                      >
+                        {alternateEditor === 'combine'
+                          ? 'Save Combined Class'
+                          : 'Save Redistribution'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {confirmLeaveUncovered && (
+                  <div
+                    className="border-danger/30 bg-danger-soft mt-3 rounded-md border p-3"
+                    role="alertdialog"
+                    aria-labelledby="leave-uncovered-title"
+                  >
+                    <p
+                      id="leave-uncovered-title"
+                      className="text-danger-dark text-sm font-bold"
+                    >
+                      Mark instructional coverage Intentionally Uncovered?
+                    </p>
+                    <p className="mt-1 text-xs">
+                      This Assignment is instructional. Confirming will record
+                      the administrator override as Intentionally Uncovered.
+                    </p>
+                    <div className="mt-3 flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={busy}
+                        onClick={() => setConfirmLeaveUncovered(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => {
+                          setConfirmLeaveUncovered(false);
+                          void act({
+                            action: 'leave_uncovered',
+                            acknowledged: true,
+                          });
+                        }}
+                      >
+                        Mark Intentionally Uncovered Anyway
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {splitOpen && (
+                  <SplitAssignmentEditor
+                    key={assignment.id}
+                    assignment={assignment}
+                    staff={staff}
+                    snapMinutes={detail.settings.splitSnapMinutes}
+                    onBusyChange={setBusy}
+                    onCancel={() => setSplitOpen(false)}
+                    onChange={onChange}
+                  />
+                )}
+              </section>
+            )}
+
+            {!readOnly && !alternateEditor && !splitOpen && (
+              <section className="border-border space-y-3 rounded-lg border p-4">
+                <div>
+                  <h3 className="text-sm font-bold">Details</h3>
+                  <p className="text-muted-foreground mt-0.5 text-xs">
+                    Room and Note supplement the primary resolution. They do not
+                    resolve an Unresolved Assignment by themselves.
+                  </p>
+                </div>
                 <AssignmentDetailsFields
                   assignment={assignment}
                   rooms={rooms}
@@ -599,141 +696,85 @@ export function ResolveSubNeedDrawer({
                   onRoomChange={setRoomId}
                   onNoteChange={setNote}
                 />
-
-                <div className="flex justify-end gap-2">
+                <div className="flex justify-end">
                   <Button
                     size="sm"
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => {
-                      setAlternateEditor(null);
-                      setPendingOverride(null);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    disabled={
-                      busy ||
-                      (alternateEditor === 'combine'
-                        ? !combineEntryId
-                        : redistributionStaffIds.length < 2)
-                    }
+                    disabled={busy || roomsLoading}
                     onClick={() =>
-                      void act(
-                        alternateEditor === 'combine'
-                          ? {
-                              action: 'combine_class',
-                              receivingScheduleEntryId: combineEntryId,
-                              roomId: roomId || null,
-                              note: note.trim() || null,
-                              overrideAcknowledged: false,
-                            }
-                          : {
-                              action: 'redistribute',
-                              receivingStaffIds: redistributionStaffIds,
-                              roomId: roomId || null,
-                              note: note.trim() || null,
-                              overrideAcknowledged: false,
-                            },
-                      )
+                      void act({
+                        action: 'update_details',
+                        roomId: roomId || null,
+                        note: note.trim() || null,
+                      })
                     }
                   >
-                    {alternateEditor === 'combine'
-                      ? 'Save Combined Class'
-                      : 'Save Redistribution'}
+                    Save Details
                   </Button>
                 </div>
-              </div>
+              </section>
             )}
-            {confirmLeaveUncovered && (
-              <div
-                className="border-danger/30 bg-danger-soft mt-3 rounded-md border p-3"
-                role="alertdialog"
-                aria-labelledby="leave-uncovered-title"
-              >
-                <p
-                  id="leave-uncovered-title"
-                  className="text-danger-dark text-sm font-bold"
+          </fieldset>
+        </div>
+        {!readOnly && (
+          <footer
+            className="border-border shrink-0 border-t bg-white px-5 py-3"
+            aria-label="Alternate resolutions"
+          >
+            <fieldset disabled={busy}>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setSplitOpen(true);
+                    setAlternateEditor(null);
+                    setConfirmLeaveUncovered(false);
+                  }}
                 >
-                  Mark instructional coverage Not Covered?
-                </p>
-                <p className="mt-1 text-xs">
-                  This Assignment is instructional. Confirming will record the
-                  administrator override as Not Covered.
-                </p>
-                <div className="mt-3 flex justify-end gap-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => setConfirmLeaveUncovered(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => {
-                      setConfirmLeaveUncovered(false);
+                  <Split className="size-3.5" /> Split Assignment
+                </Button>
+                {assignment.responsibilityType === 'instruction' && (
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => openAlternateEditor('redistribute')}
+                    >
+                      Redistribute Class
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => openAlternateEditor('combine')}
+                    >
+                      Combine Class
+                    </Button>
+                  </>
+                )}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setSplitOpen(false);
+                    setAlternateEditor(null);
+                    const needsAck =
+                      assignment.responsibilityType === 'instruction';
+                    if (needsAck) {
+                      setConfirmLeaveUncovered(true);
+                    } else {
                       void act({
                         action: 'leave_uncovered',
-                        acknowledged: true,
+                        acknowledged: false,
                       });
-                    }}
-                  >
-                    Mark Not Covered Anyway
-                  </Button>
-                </div>
-              </div>
-            )}
-            {splitOpen && (
-              <SplitAssignmentEditor
-                assignment={assignment}
-                snapMinutes={detail.settings.splitSnapMinutes}
-                onCancel={() => setSplitOpen(false)}
-                onChange={onChange}
-              />
-            )}
-          </section>
-
-          {!alternateEditor && (
-            <section className="border-border space-y-3 rounded-lg border p-4">
-              <div>
-                <h3 className="text-sm font-bold">Details</h3>
-                <p className="text-muted-foreground mt-0.5 text-xs">
-                  Room and Note supplement the primary resolution. They do not
-                  resolve an Unresolved Assignment by themselves.
-                </p>
-              </div>
-              <AssignmentDetailsFields
-                assignment={assignment}
-                rooms={rooms}
-                roomsLoading={roomsLoading}
-                roomId={roomId}
-                note={note}
-                onRoomChange={setRoomId}
-                onNoteChange={setNote}
-              />
-              <div className="flex justify-end">
-                <Button
-                  size="sm"
-                  disabled={busy || roomsLoading}
-                  onClick={() =>
-                    void act({
-                      action: 'update_details',
-                      roomId: roomId || null,
-                      note: note.trim() || null,
-                    })
-                  }
+                    }
+                  }}
                 >
-                  Save Details
+                  Mark Intentionally Uncovered
                 </Button>
               </div>
-            </section>
-          )}
-        </div>
+            </fieldset>
+          </footer>
+        )}
       </aside>
     </div>
   );
@@ -755,11 +796,15 @@ interface SplitConflictGroup {
 
 function SplitAssignmentEditor({
   assignment,
+  staff,
+  onBusyChange,
   snapMinutes,
   onCancel,
   onChange,
 }: {
   readonly assignment: PlanAssignment;
+  readonly staff: readonly StaffData[];
+  readonly onBusyChange: (busy: boolean) => void;
   readonly snapMinutes: number;
   readonly onCancel: () => void;
   readonly onChange: (detail: PlanDetail) => void;
@@ -767,6 +812,11 @@ function SplitAssignmentEditor({
   const [drafts, setDrafts] = useState<SplitDraftSegment[]>(() =>
     initialSplitDraft(assignment, snapMinutes),
   );
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [candidateRetry, setCandidateRetry] = useState(0);
+  const [candidateErrors, setCandidateErrors] = useState<
+    Record<string, string>
+  >({});
   const [candidateMap, setCandidateMap] = useState<
     Record<string, readonly CandidatePreview[]>
   >({});
@@ -807,12 +857,62 @@ function SplitAssignmentEditor({
     (segment) => minutes(segment.endTime) - minutes(segment.startTime) >= 2,
   );
 
-  const handleCandidatesLoaded = useCallback(
-    (key: string, values: readonly CandidatePreview[]) => {
-      setCandidateMap((current) => ({ ...current, [key]: values }));
-    },
-    [],
+  // Only interval changes invalidate previews; staff selections retain their draft evidence.
+  const intervalSignature = JSON.stringify(
+    intervals.map(({ key, startTime, endTime }) => ({
+      key,
+      startTime,
+      endTime,
+    })),
   );
+  useEffect(() => {
+    const controller = new AbortController();
+    const requested = JSON.parse(intervalSignature) as {
+      key: string;
+      startTime: string;
+      endTime: string;
+    }[];
+    const timeout = window.setTimeout(() => {
+      for (const segment of requested) {
+        if (!segment.startTime || segment.startTime >= segment.endTime)
+          continue;
+        const key = `${segment.key}:${segment.startTime}:${segment.endTime}`;
+        void getCandidates(assignment.id, {
+          ...segment,
+          signal: controller.signal,
+        })
+          .then((values) => {
+            if (!controller.signal.aborted) {
+              setCandidateMap((current) => ({ ...current, [key]: values }));
+              setCandidateErrors((current) => ({ ...current, [key]: '' }));
+            }
+          })
+          .catch((cause: unknown) => {
+            if (!controller.signal.aborted)
+              setCandidateErrors((current) => ({
+                ...current,
+                [key]: errorMessage(cause),
+              }));
+          });
+      }
+    }, 250);
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [assignment.id, intervalSignature, candidateRetry]);
+  const active =
+    intervals.find((segment) => segment.key === activeKey) ?? intervals[0]!;
+  function candidatesFor(segment: typeof active) {
+    return candidateMap[
+      `${segment.key}:${segment.startTime}:${segment.endTime}`
+    ];
+  }
+  function errorFor(segment: typeof active) {
+    return candidateErrors[
+      `${segment.key}:${segment.startTime}:${segment.endTime}`
+    ];
+  }
 
   function updateDrafts(
     update: (current: readonly SplitDraftSegment[]) => SplitDraftSegment[],
@@ -875,7 +975,7 @@ function SplitAssignmentEditor({
 
   function conflictGroups(): SplitConflictGroup[] {
     return intervals.flatMap((segment, index) => {
-      const selected = candidateMap[segment.key]?.find(
+      const selected = candidatesFor(segment)?.find(
         (candidate) => candidate.id === segment.staffId,
       );
       return selected && selected.conflicts.length > 0
@@ -900,6 +1000,8 @@ function SplitAssignmentEditor({
     }[],
     assignAnyway: boolean,
   ) {
+    if (saving) return;
+    onBusyChange(true);
     setSaving(true);
     setSaveError(null);
     try {
@@ -926,6 +1028,7 @@ function SplitAssignmentEditor({
       }
     } finally {
       setSaving(false);
+      onBusyChange(false);
     }
   }
 
@@ -942,79 +1045,130 @@ function SplitAssignmentEditor({
 
       {saveError && <ErrorBanner message={saveError} />}
 
-      <div className="space-y-3">
-        {intervals.map((segment, index) => (
-          <section
-            key={segment.key}
-            className="border-border rounded-md border p-3"
-            aria-labelledby={`split-segment-${segment.key}`}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h5
-                  id={`split-segment-${segment.key}`}
-                  className="text-sm font-bold"
+      <fieldset disabled={saving} className="min-w-0 space-y-3">
+        <ol
+          className="divide-border divide-y rounded-md border"
+          aria-label="Split segment summary"
+        >
+          {intervals.map((segment, index) => {
+            const selected = candidatesFor(segment)?.find(
+              (candidate) => candidate.id === segment.staffId,
+            );
+            const invalid =
+              !segment.startTime ||
+              segment.startTime >= segment.endTime ||
+              segment.endTime > assignment.endTime ||
+              segment.startTime < assignment.startTime;
+            const state = invalid
+              ? 'Invalid boundary'
+              : !segment.staffId
+                ? 'Incomplete'
+                : errorFor(segment)
+                  ? 'Availability unavailable'
+                  : !candidatesFor(segment)
+                    ? 'Checking availability'
+                    : !selected
+                      ? 'No longer eligible'
+                      : selected.conflicts.length
+                        ? 'Conflict'
+                        : selected.warnings.length ||
+                            (selected.projectedBurden !== null &&
+                              selected.projectedBurden >= selected.threshold)
+                          ? 'Warning'
+                          : 'Complete';
+            return (
+              <li
+                key={segment.key}
+                className="flex flex-wrap items-center gap-3 p-2"
+              >
+                <button
+                  type="button"
+                  aria-pressed={active.key === segment.key}
+                  aria-controls="active-split-interval"
+                  onClick={() => setActiveKey(segment.key)}
+                  className={cn(
+                    'focus-visible:outline-brand-dark min-w-0 flex-1 rounded p-2 text-left focus-visible:outline-2',
+                    active.key === segment.key && 'bg-brand-soft',
+                  )}
                 >
-                  Segment {index + 1}
-                </h5>
-                <p className="text-muted-foreground font-mono text-xs">
-                  {segment.startTime}–{segment.endTime}
-                </p>
-              </div>
-              {drafts.length > 2 && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => removeSegment(index)}
-                >
-                  Remove
-                </Button>
-              )}
-            </div>
-
-            {index < intervals.length - 1 && (
-              <div className="mt-3 max-w-44">
-                <Labeled label="Ends at">
-                  <input
-                    type="time"
-                    step={snapMinutes * 60}
-                    min={segment.startTime}
-                    max={intervals[index + 1]!.endTime}
-                    value={segment.endTime}
-                    onChange={(event) => {
-                      const endTime = event.target.value;
-                      updateDrafts((current) =>
-                        current.map((draft) =>
-                          draft.key === segment.key
-                            ? { ...draft, endTime }
-                            : draft,
-                        ),
-                      );
-                    }}
-                    className="field"
-                  />
-                </Labeled>
-              </div>
-            )}
-
-            <SegmentCandidatePicker
-              assignmentId={assignment.id}
-              segmentKey={segment.key}
-              startTime={segment.startTime}
-              endTime={segment.endTime}
-              staffId={segment.staffId}
-              onStaffChange={(staffId) =>
-                updateDrafts((current) =>
-                  current.map((draft) =>
-                    draft.key === segment.key ? { ...draft, staffId } : draft,
-                  ),
-                )
-              }
-              onCandidatesLoaded={handleCandidatesLoaded}
-            />
-          </section>
-        ))}
-      </div>
+                  <span className="block text-sm font-semibold">
+                    Segment {index + 1} · {segment.startTime}–{segment.endTime}
+                  </span>
+                  <span className="block text-xs wrap-anywhere">
+                    {selected?.displayName ??
+                      staff.find((person) => person.id === segment.staffId)
+                        ?.displayName ??
+                      'Choose staff'}{' '}
+                    ·{' '}
+                    <span
+                      aria-live="polite"
+                      className={
+                        state === 'Complete'
+                          ? 'text-brand-dark'
+                          : 'text-danger-dark'
+                      }
+                    >
+                      {state}
+                    </span>
+                  </span>
+                </button>
+                {index < intervals.length - 1 && (
+                  <Labeled label={`Segment ${index + 1} ends at`}>
+                    <input
+                      type="time"
+                      step={snapMinutes * 60}
+                      min={segment.startTime}
+                      max={intervals[index + 1]!.endTime}
+                      value={segment.endTime}
+                      aria-invalid={invalid}
+                      onChange={(event) => {
+                        const endTime = event.target.value;
+                        updateDrafts((current) =>
+                          current.map((draft) =>
+                            draft.key === segment.key
+                              ? { ...draft, endTime }
+                              : draft,
+                          ),
+                        );
+                      }}
+                      className="field"
+                    />
+                  </Labeled>
+                )}
+                {drafts.length > 2 && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label={`Remove segment ${index + 1}`}
+                    onClick={() => removeSegment(index)}
+                  >
+                    Remove
+                  </Button>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+        <section id="active-split-interval" aria-label="Active split interval">
+          <h5 className="text-sm font-bold" aria-live="polite">
+            Select staff · {active.startTime}–{active.endTime}
+          </h5>
+          <SegmentCandidatePicker
+            key={active.key}
+            candidates={candidatesFor(active)}
+            error={errorFor(active)}
+            onRetry={() => setCandidateRetry((value) => value + 1)}
+            staffId={active.staffId}
+            onStaffChange={(staffId) =>
+              updateDrafts((current) =>
+                current.map((draft) =>
+                  draft.key === active.key ? { ...draft, staffId } : draft,
+                ),
+              )
+            }
+          />
+        </section>
+      </fieldset>
 
       {!structurallyValid && (
         <p className="text-danger-dark text-xs">
@@ -1027,7 +1181,7 @@ function SplitAssignmentEditor({
         <Button
           size="sm"
           variant="secondary"
-          disabled={!canAddSegment}
+          disabled={saving || !canAddSegment}
           onClick={addSegment}
         >
           + Add Segment
@@ -1111,400 +1265,80 @@ function SplitAssignmentEditor({
 }
 
 function SegmentCandidatePicker({
-  assignmentId,
-  segmentKey,
-  startTime,
-  endTime,
+  onRetry,
+  candidates,
+  error,
   staffId,
   onStaffChange,
-  onCandidatesLoaded,
 }: {
-  readonly assignmentId: string;
-  readonly segmentKey: string;
-  readonly startTime: string;
-  readonly endTime: string;
+  readonly onRetry: () => void;
+  readonly candidates: readonly CandidatePreview[] | undefined;
+  readonly error: string | undefined;
   readonly staffId: string;
   readonly onStaffChange: (staffId: string) => void;
-  readonly onCandidatesLoaded: (
-    key: string,
-    values: readonly CandidatePreview[],
-  ) => void;
 }) {
-  const requestKey = `${startTime}-${endTime}`;
-  const [response, setResponse] = useState<{
-    readonly key: string;
-    readonly candidates: CandidatePreview[];
-    readonly error: string | null;
-  }>({ key: '', candidates: [], error: null });
   const [search, setSearch] = useState('');
-  const loading = response.key !== requestKey;
-  const candidates = loading ? [] : response.candidates;
-  const error = loading ? null : response.error;
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => {
-      onCandidatesLoaded(segmentKey, []);
-      void getCandidates(assignmentId, {
-        startTime,
-        endTime,
-        signal: controller.signal,
-      })
-        .then((values) => {
-          setResponse({ key: requestKey, candidates: values, error: null });
-          onCandidatesLoaded(segmentKey, values);
-        })
-        .catch((cause: unknown) => {
-          if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
-            setResponse({
-              key: requestKey,
-              candidates: [],
-              error: errorMessage(cause),
-            });
-          }
-        });
-    }, 250);
-    return () => {
-      window.clearTimeout(timeout);
-      controller.abort();
-    };
-  }, [
-    assignmentId,
-    endTime,
-    onCandidatesLoaded,
-    requestKey,
-    segmentKey,
-    startTime,
-  ]);
-
-  const recommended = candidates.filter(
-    (candidate) =>
-      candidate.availability !== 'manual' && candidate.conflicts.length === 0,
-  );
-  const other = candidates.filter((candidate) => {
-    if (recommended.includes(candidate)) return false;
-    const query = search.trim().toLocaleLowerCase('en-US');
-    return (
-      !query ||
-      `${candidate.displayName} ${candidate.availabilitySource} ${candidate.conflicts.join(' ')}`
-        .toLocaleLowerCase('en-US')
-        .includes(query)
-    );
-  });
-  const selected = candidates.find((candidate) => candidate.id === staffId);
-
+  const [other, setOther] = useState(false);
+  const recommended =
+    candidates?.filter(
+      (candidate) =>
+        candidate.availability !== 'manual' && !candidate.conflicts.length,
+    ) ?? [];
+  const options = other
+    ? (candidates ?? []).filter(
+        (candidate) =>
+          !recommended.includes(candidate) &&
+          `${candidate.displayName} ${candidate.availabilitySource} ${candidate.conflicts.join(' ')}`
+            .toLocaleLowerCase('en-US')
+            .includes(search.trim().toLocaleLowerCase('en-US')),
+      )
+    : recommended;
   return (
-    <div className="mt-3 space-y-2" aria-busy={loading}>
-      <p className="text-muted-foreground text-xs font-bold tracking-wide uppercase">
-        Recommended
-      </p>
-      {loading ? (
-        <div className="bg-muted h-16 animate-pulse rounded-md" />
-      ) : error ? (
-        <ErrorBanner message={error} />
-      ) : recommended.length > 0 ? (
-        <div className="space-y-1.5">
-          {recommended.map((candidate) => (
-            <SegmentCandidateOption
-              key={candidate.id}
-              candidate={candidate}
-              selected={candidate.id === staffId}
-              onSelect={() => onStaffChange(candidate.id)}
-            />
-          ))}
-        </div>
-      ) : (
-        <p className="border-border text-muted-foreground rounded-md border border-dashed p-2 text-xs">
-          No staff are automatically available for this segment.
-        </p>
-      )}
-
-      {!loading && !error && candidates.length > recommended.length && (
-        <details className="border-border rounded-md border">
-          <summary className="hover:bg-muted/40 cursor-pointer px-2.5 py-2 text-xs font-semibold">
-            Other Staff ({candidates.length - recommended.length})
-          </summary>
-          <div className="border-border space-y-2 border-t p-2">
-            <label className="border-border flex h-8 items-center gap-2 rounded-md border px-2">
-              <Search className="text-muted-foreground size-3.5" />
-              <span className="sr-only">Search Other Staff</span>
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search Other Staff"
-                className="w-full bg-transparent text-xs outline-none"
-              />
-            </label>
-            {other.map((candidate) => (
-              <SegmentCandidateOption
-                key={candidate.id}
-                candidate={candidate}
-                selected={candidate.id === staffId}
-                onSelect={() => onStaffChange(candidate.id)}
-              />
-            ))}
-          </div>
-        </details>
-      )}
-
-      {staffId && !selected && !loading && !error && (
-        <p className="text-danger-dark text-xs">
-          The previously selected staff member is no longer eligible.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function SegmentCandidateOption({
-  candidate,
-  selected,
-  onSelect,
-}: {
-  readonly candidate: CandidatePreview;
-  readonly selected: boolean;
-  readonly onSelect: () => void;
-}) {
-  const thresholdWarning =
-    candidate.projectedBurden !== null &&
-    candidate.projectedBurden >= candidate.threshold;
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onSelect}
-      className={`w-full rounded-md border p-2 text-left transition-colors ${
-        selected
-          ? 'border-brand bg-brand-soft/40'
-          : 'border-border hover:bg-muted/40'
-      }`}
-    >
-      <span className="flex flex-wrap items-center gap-1.5 text-sm">
-        <span className="font-semibold">{candidate.displayName}</span>
-        <Badge>{availabilityLabel(candidate)}</Badge>
-        {candidate.isDefaultCandidate && (
-          <Badge variant="success">Default</Badge>
-        )}
-        {thresholdWarning && (
-          <Badge variant="warning">
-            <AlertTriangle className="size-3" aria-hidden="true" />
-            Workload Warning
-          </Badge>
-        )}
-      </span>
-      <SegmentWorkload candidate={candidate} />
-      {candidate.conflicts.map((conflict) => (
-        <span
-          key={conflict}
-          className="text-danger-dark mt-1 flex gap-1.5 text-xs"
-        >
-          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-          {conflict}
-        </span>
-      ))}
-      {candidate.warnings
-        .filter((warning) => warning.startsWith('Plan-time calculation needs'))
-        .map((warning) => (
-          <span
-            key={warning}
-            className="border-warning/40 bg-warning-soft text-warning-dark mt-1 block rounded border px-2 py-1 text-xs"
-          >
-            {warning}
-          </span>
-        ))}
-      {thresholdWarning && (
-        <span className="border-warning/40 bg-warning-soft text-warning-dark mt-1 block rounded border px-2 py-1 text-xs">
-          After assignment, {candidate.projectedBurden?.toFixed(2)} Plan Periods
-          Lost reaches the {candidate.threshold.toFixed(2)} warning threshold.
-        </span>
-      )}
-    </button>
-  );
-}
-
-function SegmentWorkload({
-  candidate,
-}: {
-  readonly candidate: CandidatePreview;
-}) {
-  const current = candidate.currentBurden?.toFixed(2) ?? 'Unknown';
-  const proposed =
-    candidate.proposedBurden === null
-      ? 'Unknown'
-      : `+${candidate.proposedBurden.toFixed(2)}`;
-  const projected = candidate.projectedBurden?.toFixed(2) ?? 'Unknown';
-  return (
-    <span className="text-muted-foreground mt-1 block text-xs">
-      Last {candidate.windowDays} days: {current} · This segment: {proposed} ·
-      After assignment: {projected}
-    </span>
-  );
-}
-
-function CandidateCard({
-  candidate,
-  busy,
-  confirming,
-  onRequestAssign,
-  onCancelOverride,
-  onConfirmOverride,
-}: {
-  readonly candidate: CandidatePreview;
-  readonly busy: boolean;
-  readonly confirming: boolean;
-  readonly onRequestAssign: () => void;
-  readonly onCancelOverride: () => void;
-  readonly onConfirmOverride: () => void;
-}) {
-  const thresholdWarning =
-    candidate.projectedBurden !== null &&
-    candidate.projectedBurden >= candidate.threshold;
-  return (
-    <div className="p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-semibold">{candidate.displayName}</span>
-            <Badge>{availabilityLabel(candidate)}</Badge>
-            {candidate.isDefaultCandidate && (
-              <Badge variant="success">Default</Badge>
-            )}
-            {thresholdWarning && (
-              <Badge variant="warning">
-                <AlertTriangle className="size-3" aria-hidden="true" />
-                Workload Warning
-              </Badge>
-            )}
-          </div>
-          <WorkloadSummary candidate={candidate} />
-          {candidate.conflicts.map((conflict) => (
-            <p
-              key={conflict}
-              className="text-danger-dark mt-1 flex gap-1.5 text-xs"
-            >
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-              {conflict}
-            </p>
-          ))}
-          {candidate.warnings
-            .filter((warning) =>
-              warning.startsWith('Plan-time calculation needs'),
-            )
-            .map((warning) => (
-              <p
-                key={warning}
-                className="border-warning/40 bg-warning-soft text-warning-dark mt-2 rounded border px-2 py-1.5 text-xs font-semibold"
-              >
-                {warning}
-              </p>
-            ))}
-          {thresholdWarning && (
-            <p className="border-warning/40 bg-warning-soft text-warning-dark mt-2 rounded border px-2 py-1.5 text-xs font-semibold">
-              After assignment, {candidate.projectedBurden.toFixed(2)} Plan
-              Periods Lost reaches the {candidate.threshold.toFixed(2)} warning
-              threshold.
-            </p>
-          )}
-        </div>
+    <div className="mt-2 space-y-3" aria-busy={!candidates && !error}>
+      <div className="flex gap-2">
         <Button
           size="sm"
-          variant={candidate.conflicts.length ? 'secondary' : 'primary'}
-          disabled={busy}
-          onClick={onRequestAssign}
+          variant={other ? 'secondary' : 'primary'}
+          aria-pressed={!other}
+          onClick={() => setOther(false)}
         >
-          {candidate.conflicts.length ? 'Review conflict' : 'Assign'}
+          Recommended
+        </Button>
+        <Button
+          size="sm"
+          variant={other ? 'primary' : 'secondary'}
+          aria-pressed={other}
+          onClick={() => setOther(true)}
+        >
+          Other Staff
         </Button>
       </div>
-
-      {confirming && (
-        <div
-          className="border-danger/30 bg-danger-soft mt-3 rounded-md border p-3"
-          role="alertdialog"
-          aria-labelledby={`conflict-title-${candidate.id}`}
-          aria-describedby={`conflict-description-${candidate.id}`}
-        >
-          <p
-            id={`conflict-title-${candidate.id}`}
-            className="text-danger-dark text-sm font-bold"
-          >
-            {candidate.displayName} has a conflict
-          </p>
-          <ul
-            id={`conflict-description-${candidate.id}`}
-            className="text-danger-dark mt-1 list-inside list-disc space-y-1 text-xs"
-          >
-            {candidate.conflicts.map((conflict) => (
-              <li key={conflict}>{conflict}</li>
-            ))}
-          </ul>
-          <p className="mt-2 text-xs">
-            The administrator may override these warnings. The override will be
-            recorded with the Assignment.
-          </p>
-          <div className="mt-3 flex justify-end gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={busy}
-              onClick={onCancelOverride}
-            >
-              Cancel
-            </Button>
-            <Button size="sm" disabled={busy} onClick={onConfirmOverride}>
-              Assign Anyway
-            </Button>
-          </div>
+      {other && (
+        <Labeled label="Search Other Staff">
+          <input
+            className="field"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </Labeled>
+      )}
+      {error ? (
+        <div className="space-y-2">
+          <ErrorBanner message={error} />
+          <Button size="sm" variant="secondary" onClick={onRetry}>
+            Retry interval candidates
+          </Button>
         </div>
+      ) : !candidates ? (
+        <CandidateSkeleton />
+      ) : (
+        <CandidateLedger
+          candidates={options}
+          selectedId={staffId}
+          onSelect={(candidate) => onStaffChange(candidate.id)}
+        />
       )}
     </div>
-  );
-}
-
-function WorkloadSummary({
-  candidate,
-}: {
-  readonly candidate: CandidatePreview;
-}) {
-  if (candidate.isSchoolSub) {
-    return (
-      <p className="text-muted-foreground mt-1 text-xs">
-        School Sub assignments do not add Plan Periods Lost.
-      </p>
-    );
-  }
-  if (candidate.currentBurden === null || candidate.proposedBurden === null) {
-    return null;
-  }
-  if (candidate.proposedBurden === 0) {
-    return (
-      <p className="text-muted-foreground mt-1 text-xs">
-        <span className="font-semibold">Last {candidate.windowDays} days:</span>{' '}
-        {candidate.currentBurden.toFixed(2)} · This assignment does not use plan
-        time.
-      </p>
-    );
-  }
-  return (
-    <dl className="text-muted-foreground mt-1 grid grid-cols-3 gap-2 text-xs">
-      <div>
-        <dt className="font-semibold">Last {candidate.windowDays} days</dt>
-        <dd>{candidate.currentBurden.toFixed(2)}</dd>
-      </div>
-      <div>
-        <dt className="font-semibold">This assignment</dt>
-        <dd>+{candidate.proposedBurden.toFixed(2)}</dd>
-        <dd>
-          {candidate.standardPeriodSource === 'auto' ? 'Auto: ' : ''}
-          {candidate.standardPeriodMinutes}-minute standard period
-        </dd>
-      </div>
-      <div>
-        <dt className="font-semibold">After assignment</dt>
-        <dd>
-          {candidate.projectedBurden?.toFixed(2) ?? 'Needs configuration'}
-        </dd>
-      </div>
-    </dl>
   );
 }
 
@@ -1521,19 +1355,6 @@ function CandidateSkeleton() {
   );
 }
 
-function availabilityLabel(candidate: CandidatePreview): string {
-  if (candidate.availability === 'school_sub') return 'School Sub';
-  if (candidate.availability === 'plan') return 'PLAN';
-  if (candidate.availability === 'admin') return 'Admin';
-  if (candidate.availability === 'open') return 'Available';
-  if (candidate.availability === 'manual') return 'Manual';
-  if (candidate.availabilitySource === 'School Sub') return 'School Sub';
-  if (candidate.availabilitySource === 'Plan Period') return 'PLAN';
-  if (candidate.availabilitySource === 'Admin') return 'Admin';
-  if (candidate.availabilitySource === 'Available') return 'Available';
-  return 'Manual';
-}
-
 function currentAssignmentLabel(assignment: PlanAssignment): string {
   const presented = assignmentResolutionLabel(assignment);
   if (presented !== 'Assigned') return presented;
@@ -1546,7 +1367,8 @@ function currentAssignmentLabel(assignment: PlanAssignment): string {
           `${segment.staffName} ${segment.startTime}–${segment.endTime}`,
       )
       .join('; ');
-  if (assignment.status === 'intentionally_uncovered') return 'Not Covered';
+  if (assignment.status === 'intentionally_uncovered')
+    return 'Intentionally Uncovered';
   if (assignment.resolutionType)
     return assignment.resolutionType.replaceAll('_', ' ');
   return 'Unresolved';
@@ -1667,7 +1489,8 @@ function sharedPositionChoice(
     return `Split — ${position.segments
       .map((segment) => segment.staffName)
       .join(' / ')}`;
-  if (position.status === 'intentionally_uncovered') return 'Not Covered';
+  if (position.status === 'intentionally_uncovered')
+    return 'Intentionally Uncovered';
   if (position.resolutionType === 'combine_class') return 'Combined Class';
   if (position.resolutionType === 'redistribution') return 'Redistribution';
   return 'Unassigned';

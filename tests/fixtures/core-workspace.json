@@ -1,0 +1,737 @@
+{
+  "staff": [
+    {
+      "id": "s0",
+      "displayName": "Avery Bennett",
+      "role": "Teacher",
+      "isSchoolSub": false
+    },
+    {
+      "id": "s1",
+      "displayName": "Jordan Kim",
+      "role": "Teacher",
+      "isSchoolSub": false
+    },
+    {
+      "id": "s2",
+      "displayName": "Riley Quinn",
+      "role": "Teacher",
+      "isSchoolSub": true
+    },
+    {
+      "id": "s3",
+      "displayName": "Morgan Ellis",
+      "role": "Teacher",
+      "isSchoolSub": false
+    },
+    {
+      "id": "s4",
+      "displayName": "Casey Brooks",
+      "role": "Teacher",
+      "isSchoolSub": false
+    },
+    {
+      "id": "s5",
+      "displayName": "Priya Nair",
+      "role": "Teacher",
+      "isSchoolSub": false
+    },
+    {
+      "id": "s6",
+      "displayName": "Theo Wallace",
+      "role": "Teacher",
+      "isSchoolSub": false
+    }
+  ],
+  "candidates": [
+    {
+      "id": "s3",
+      "displayName": "Morgan Ellis",
+      "role": "Teacher",
+      "isSchoolSub": false,
+      "isDefaultCandidate": true,
+      "availability": "plan",
+      "availabilitySource": "Plan Period",
+      "conflicts": [],
+      "warnings": [],
+      "currentBurden": 1.5,
+      "proposedBurden": 1,
+      "projectedBurden": 2.5,
+      "standardPeriodMinutes": 50,
+      "standardPeriodSource": "configured",
+      "workloadKnown": true,
+      "threshold": 5,
+      "windowDays": 7
+    },
+    {
+      "id": "s2",
+      "displayName": "Riley Quinn",
+      "role": "Teacher",
+      "isSchoolSub": true,
+      "isDefaultCandidate": false,
+      "availability": "school_sub",
+      "availabilitySource": "School Sub",
+      "conflicts": [],
+      "warnings": [],
+      "currentBurden": null,
+      "proposedBurden": null,
+      "projectedBurden": null,
+      "standardPeriodMinutes": 50,
+      "standardPeriodSource": "configured",
+      "workloadKnown": true,
+      "threshold": 5,
+      "windowDays": 7
+    },
+    {
+      "id": "s4",
+      "displayName": "Casey Brooks",
+      "role": "Teacher",
+      "isSchoolSub": false,
+      "isDefaultCandidate": false,
+      "availability": "admin",
+      "availabilitySource": "Admin",
+      "conflicts": [],
+      "warnings": [],
+      "currentBurden": 2.0,
+      "proposedBurden": 0,
+      "projectedBurden": 2.0,
+      "standardPeriodMinutes": 50,
+      "standardPeriodSource": "configured",
+      "workloadKnown": true,
+      "threshold": 5,
+      "windowDays": 7
+    },
+    {
+      "id": "s5",
+      "displayName": "Priya Nair",
+      "role": "Teacher",
+      "isSchoolSub": false,
+      "isDefaultCandidate": false,
+      "availability": "open",
+      "availabilitySource": "Available",
+      "conflicts": [],
+      "warnings": [],
+      "currentBurden": 2.5,
+      "proposedBurden": 0,
+      "projectedBurden": 2.5,
+      "standardPeriodMinutes": 50,
+      "standardPeriodSource": "configured",
+      "workloadKnown": true,
+      "threshold": 5,
+      "windowDays": 7
+    },
+    {
+      "id": "s0",
+      "displayName": "Avery Bennett",
+      "role": "Teacher",
+      "isSchoolSub": false,
+      "isDefaultCandidate": false,
+      "availability": "manual",
+      "availabilitySource": "Teaching",
+      "conflicts": ["Concurrent instruction"],
+      "warnings": [],
+      "currentBurden": 0.0,
+      "proposedBurden": 0,
+      "projectedBurden": 0.0,
+      "standardPeriodMinutes": 50,
+      "standardPeriodSource": "configured",
+      "workloadKnown": true,
+      "threshold": 5,
+      "windowDays": 7
+    },
+    {
+      "id": "s1",
+      "displayName": "Jordan Kim",
+      "role": "Teacher",
+      "isSchoolSub": false,
+      "isDefaultCandidate": false,
+      "availability": "manual",
+      "availabilitySource": "Absent",
+      "conflicts": ["Concurrent instruction"],
+      "warnings": [],
+      "currentBurden": 0.5,
+      "proposedBurden": 0,
+      "projectedBurden": 0.5,
+      "standardPeriodMinutes": 50,
+      "standardPeriodSource": "configured",
+      "workloadKnown": true,
+      "threshold": 5,
+      "windowDays": 7
+    },
+    {
+      "id": "s6",
+      "displayName": "Theo Wallace",
+      "role": "Teacher",
+      "isSchoolSub": false,
+      "isDefaultCandidate": false,
+      "availability": "manual",
+      "availabilitySource": "Teaching",
+      "conflicts": ["Concurrent instruction"],
+      "warnings": [],
+      "currentBurden": 3.0,
+      "proposedBurden": 0,
+      "projectedBurden": 3.0,
+      "standardPeriodMinutes": 50,
+      "standardPeriodSource": "configured",
+      "workloadKnown": true,
+      "threshold": 5,
+      "windowDays": 7
+    }
+  ],
+  "detail": {
+    "plan": {
+      "id": "p1",
+      "date": "2026-10-07",
+      "dayType": "A",
+      "expectedDayType": "A",
+      "calendar": {
+        "isSchoolDay": true,
+        "isBlackoutDay": false,
+        "expectsSpecialSchedule": false,
+        "label": null,
+        "specialScheduleExpectedWarning": false
+      },
+      "scheduleVersionId": "v1",
+      "scheduleName": "Fictional validation schedule",
+      "specialScheduleId": null,
+      "specialScheduleName": null,
+      "status": "draft",
+      "structuredRevision": 1,
+      "finalizedAt": null,
+      "finalizedBy": null
+    },
+    "absences": [
+      {
+        "id": "ab0",
+        "staffId": "s0",
+        "staffName": "Avery Bennett",
+        "startDate": "2026-10-07",
+        "endDate": "2026-10-07",
+        "startTime": null,
+        "endTime": null,
+        "informationalWarning": null
+      },
+      {
+        "id": "ab1",
+        "staffId": "s1",
+        "staffName": "Jordan Kim",
+        "startDate": "2026-10-07",
+        "endDate": "2026-10-07",
+        "startTime": null,
+        "endTime": null,
+        "informationalWarning": null
+      }
+    ],
+    "assignments": [
+      {
+        "id": "a0",
+        "sourceScheduleEntryId": "e0",
+        "sourceSpecialScheduleEntryId": null,
+        "sharedResponsibilityKey": null,
+        "startTime": "08:00",
+        "endTime": "08:50",
+        "responsibilityType": "duty",
+        "description": "Morning arrival supervision",
+        "roomId": "r1",
+        "room": "EL-204",
+        "scheduledRoomId": "r1",
+        "scheduledRoom": "EL-204",
+        "absentStaff": {
+          "id": "s0",
+          "displayName": "Avery Bennett",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "assignedStaff": {
+          "id": "s3",
+          "displayName": "Morgan Ellis",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "resolutionSource": "PLAN",
+        "resolutionType": "staff",
+        "resolutionDetails": null,
+        "status": "assigned",
+        "isDefault": true,
+        "conflictExplanation": null,
+        "defaultAction": {
+          "id": "d1",
+          "actionType": "assign",
+          "staffId": "s3",
+          "staffName": "Morgan Ellis",
+          "details": null
+        },
+        "segments": [],
+        "sharedDutyStaffing": null
+      },
+      {
+        "id": "a1",
+        "sourceScheduleEntryId": "e1",
+        "sourceSpecialScheduleEntryId": null,
+        "sharedResponsibilityKey": null,
+        "startTime": "08:00",
+        "endTime": "08:50",
+        "responsibilityType": "instruction",
+        "description": "Mathematics \u2014 fractions and proportional reasoning",
+        "roomId": "r1",
+        "room": "EL-204",
+        "scheduledRoomId": "r1",
+        "scheduledRoom": "EL-204",
+        "absentStaff": {
+          "id": "s1",
+          "displayName": "Jordan Kim",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "assignedStaff": null,
+        "resolutionSource": null,
+        "resolutionType": null,
+        "resolutionDetails": null,
+        "status": "unresolved",
+        "isDefault": false,
+        "conflictExplanation": "Theo Wallace is teaching during this interval.",
+        "defaultAction": {
+          "id": "d1",
+          "actionType": "assign",
+          "staffId": "s6",
+          "staffName": "Theo Wallace",
+          "details": null
+        },
+        "segments": [],
+        "sharedDutyStaffing": null
+      },
+      {
+        "id": "a2",
+        "sourceScheduleEntryId": "e2",
+        "sourceSpecialScheduleEntryId": null,
+        "sharedResponsibilityKey": null,
+        "startTime": "08:00",
+        "endTime": "08:50",
+        "responsibilityType": "instruction",
+        "description": "Language arts",
+        "roomId": "r1",
+        "room": "EL-204",
+        "scheduledRoomId": "r1",
+        "scheduledRoom": "EL-204",
+        "absentStaff": {
+          "id": "s0",
+          "displayName": "Avery Bennett",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "assignedStaff": null,
+        "resolutionSource": null,
+        "resolutionType": null,
+        "resolutionDetails": null,
+        "status": "unresolved",
+        "isDefault": false,
+        "conflictExplanation": null,
+        "defaultAction": {
+          "id": "d1",
+          "actionType": "assign",
+          "staffId": "s3",
+          "staffName": "Morgan Ellis",
+          "details": null
+        },
+        "segments": [],
+        "sharedDutyStaffing": null
+      },
+      {
+        "id": "a3",
+        "sourceScheduleEntryId": "e3",
+        "sourceSpecialScheduleEntryId": null,
+        "sharedResponsibilityKey": null,
+        "startTime": "08:00",
+        "endTime": "08:50",
+        "responsibilityType": "duty",
+        "description": "Morning arrival supervision",
+        "roomId": "r1",
+        "room": "EL-204",
+        "scheduledRoomId": "r1",
+        "scheduledRoom": "EL-204",
+        "absentStaff": {
+          "id": "s1",
+          "displayName": "Jordan Kim",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "assignedStaff": null,
+        "resolutionSource": null,
+        "resolutionType": null,
+        "resolutionDetails": null,
+        "status": "unresolved",
+        "isDefault": false,
+        "conflictExplanation": null,
+        "defaultAction": {
+          "id": "d1",
+          "actionType": "assign",
+          "staffId": "s3",
+          "staffName": "Morgan Ellis",
+          "details": null
+        },
+        "segments": [],
+        "sharedDutyStaffing": null
+      },
+      {
+        "id": "a4",
+        "sourceScheduleEntryId": "e4",
+        "sourceSpecialScheduleEntryId": null,
+        "sharedResponsibilityKey": null,
+        "startTime": "08:00",
+        "endTime": "08:50",
+        "responsibilityType": "instruction",
+        "description": "Mathematics \u2014 fractions and proportional reasoning",
+        "roomId": "r1",
+        "room": "EL-204",
+        "scheduledRoomId": "r1",
+        "scheduledRoom": "EL-204",
+        "absentStaff": {
+          "id": "s0",
+          "displayName": "Avery Bennett",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "assignedStaff": {
+          "id": "s3",
+          "displayName": "Morgan Ellis",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "resolutionSource": "PLAN",
+        "resolutionType": "staff",
+        "resolutionDetails": null,
+        "status": "assigned",
+        "isDefault": true,
+        "conflictExplanation": null,
+        "defaultAction": {
+          "id": "d1",
+          "actionType": "assign",
+          "staffId": "s3",
+          "staffName": "Morgan Ellis",
+          "details": null
+        },
+        "segments": [],
+        "sharedDutyStaffing": null
+      },
+      {
+        "id": "a5",
+        "sourceScheduleEntryId": "e5",
+        "sourceSpecialScheduleEntryId": null,
+        "sharedResponsibilityKey": null,
+        "startTime": "08:00",
+        "endTime": "08:50",
+        "responsibilityType": "instruction",
+        "description": "Language arts",
+        "roomId": "r1",
+        "room": "EL-204",
+        "scheduledRoomId": "r1",
+        "scheduledRoom": "EL-204",
+        "absentStaff": {
+          "id": "s1",
+          "displayName": "Jordan Kim",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "assignedStaff": null,
+        "resolutionSource": null,
+        "resolutionType": null,
+        "resolutionDetails": null,
+        "status": "unresolved",
+        "isDefault": false,
+        "conflictExplanation": "Theo Wallace is teaching during this interval.",
+        "defaultAction": {
+          "id": "d1",
+          "actionType": "assign",
+          "staffId": "s6",
+          "staffName": "Theo Wallace",
+          "details": null
+        },
+        "segments": [],
+        "sharedDutyStaffing": null
+      },
+      {
+        "id": "a6",
+        "sourceScheduleEntryId": "e6",
+        "sourceSpecialScheduleEntryId": null,
+        "sharedResponsibilityKey": null,
+        "startTime": "09:00",
+        "endTime": "09:50",
+        "responsibilityType": "duty",
+        "description": "Morning arrival supervision",
+        "roomId": "r1",
+        "room": "EL-204",
+        "scheduledRoomId": "r1",
+        "scheduledRoom": "EL-204",
+        "absentStaff": {
+          "id": "s0",
+          "displayName": "Avery Bennett",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "assignedStaff": null,
+        "resolutionSource": null,
+        "resolutionType": null,
+        "resolutionDetails": null,
+        "status": "unresolved",
+        "isDefault": false,
+        "conflictExplanation": null,
+        "defaultAction": {
+          "id": "d1",
+          "actionType": "assign",
+          "staffId": "s3",
+          "staffName": "Morgan Ellis",
+          "details": null
+        },
+        "segments": [],
+        "sharedDutyStaffing": null
+      },
+      {
+        "id": "a7",
+        "sourceScheduleEntryId": "e7",
+        "sourceSpecialScheduleEntryId": null,
+        "sharedResponsibilityKey": null,
+        "startTime": "09:00",
+        "endTime": "09:50",
+        "responsibilityType": "instruction",
+        "description": "Mathematics \u2014 fractions and proportional reasoning",
+        "roomId": "r1",
+        "room": "EL-204",
+        "scheduledRoomId": "r1",
+        "scheduledRoom": "EL-204",
+        "absentStaff": {
+          "id": "s1",
+          "displayName": "Jordan Kim",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "assignedStaff": null,
+        "resolutionSource": null,
+        "resolutionType": null,
+        "resolutionDetails": null,
+        "status": "unresolved",
+        "isDefault": false,
+        "conflictExplanation": null,
+        "defaultAction": {
+          "id": "d1",
+          "actionType": "assign",
+          "staffId": "s3",
+          "staffName": "Morgan Ellis",
+          "details": null
+        },
+        "segments": [],
+        "sharedDutyStaffing": null
+      },
+      {
+        "id": "a8",
+        "sourceScheduleEntryId": "e8",
+        "sourceSpecialScheduleEntryId": null,
+        "sharedResponsibilityKey": null,
+        "startTime": "09:00",
+        "endTime": "09:50",
+        "responsibilityType": "instruction",
+        "description": "Language arts",
+        "roomId": "r1",
+        "room": "EL-204",
+        "scheduledRoomId": "r1",
+        "scheduledRoom": "EL-204",
+        "absentStaff": {
+          "id": "s0",
+          "displayName": "Avery Bennett",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "assignedStaff": {
+          "id": "s3",
+          "displayName": "Morgan Ellis",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "resolutionSource": "PLAN",
+        "resolutionType": "staff",
+        "resolutionDetails": null,
+        "status": "assigned",
+        "isDefault": true,
+        "conflictExplanation": null,
+        "defaultAction": {
+          "id": "d1",
+          "actionType": "assign",
+          "staffId": "s3",
+          "staffName": "Morgan Ellis",
+          "details": null
+        },
+        "segments": [],
+        "sharedDutyStaffing": null
+      },
+      {
+        "id": "a9",
+        "sourceScheduleEntryId": "e9",
+        "sourceSpecialScheduleEntryId": null,
+        "sharedResponsibilityKey": null,
+        "startTime": "09:00",
+        "endTime": "09:50",
+        "responsibilityType": "duty",
+        "description": "Morning arrival supervision",
+        "roomId": "r1",
+        "room": "EL-204",
+        "scheduledRoomId": "r1",
+        "scheduledRoom": "EL-204",
+        "absentStaff": {
+          "id": "s1",
+          "displayName": "Jordan Kim",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "assignedStaff": null,
+        "resolutionSource": null,
+        "resolutionType": null,
+        "resolutionDetails": null,
+        "status": "unresolved",
+        "isDefault": false,
+        "conflictExplanation": "Theo Wallace is teaching during this interval.",
+        "defaultAction": {
+          "id": "d1",
+          "actionType": "assign",
+          "staffId": "s6",
+          "staffName": "Theo Wallace",
+          "details": null
+        },
+        "segments": [],
+        "sharedDutyStaffing": null
+      },
+      {
+        "id": "a10",
+        "sourceScheduleEntryId": "e10",
+        "sourceSpecialScheduleEntryId": null,
+        "sharedResponsibilityKey": null,
+        "startTime": "09:00",
+        "endTime": "09:50",
+        "responsibilityType": "instruction",
+        "description": "Mathematics \u2014 fractions and proportional reasoning",
+        "roomId": "r1",
+        "room": "EL-204",
+        "scheduledRoomId": "r1",
+        "scheduledRoom": "EL-204",
+        "absentStaff": {
+          "id": "s0",
+          "displayName": "Avery Bennett",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "assignedStaff": null,
+        "resolutionSource": null,
+        "resolutionType": null,
+        "resolutionDetails": null,
+        "status": "unresolved",
+        "isDefault": false,
+        "conflictExplanation": null,
+        "defaultAction": {
+          "id": "d1",
+          "actionType": "assign",
+          "staffId": "s3",
+          "staffName": "Morgan Ellis",
+          "details": null
+        },
+        "segments": [],
+        "sharedDutyStaffing": null
+      },
+      {
+        "id": "a11",
+        "sourceScheduleEntryId": "e11",
+        "sourceSpecialScheduleEntryId": null,
+        "sharedResponsibilityKey": null,
+        "startTime": "09:00",
+        "endTime": "09:50",
+        "responsibilityType": "instruction",
+        "description": "Language arts",
+        "roomId": "r1",
+        "room": "EL-204",
+        "scheduledRoomId": "r1",
+        "scheduledRoom": "EL-204",
+        "absentStaff": {
+          "id": "s1",
+          "displayName": "Jordan Kim",
+          "role": "Teacher",
+          "isSchoolSub": false
+        },
+        "assignedStaff": null,
+        "resolutionSource": null,
+        "resolutionType": null,
+        "resolutionDetails": null,
+        "status": "unresolved",
+        "isDefault": false,
+        "conflictExplanation": null,
+        "defaultAction": {
+          "id": "d1",
+          "actionType": "assign",
+          "staffId": "s3",
+          "staffName": "Morgan Ellis",
+          "details": null
+        },
+        "segments": [],
+        "sharedDutyStaffing": null
+      }
+    ],
+    "schedule": [
+      {
+        "id": "e-receiver",
+        "staffId": "s6",
+        "staffName": "Theo Wallace",
+        "dayType": "ALL",
+        "startTime": "08:00",
+        "endTime": "08:50",
+        "activityType": "instruction",
+        "category": "Instruction",
+        "description": "Mathematics",
+        "roomId": "r1",
+        "room": "EL-204"
+      }
+    ],
+    "summary": {
+      "teachersAbsent": 2,
+      "assignments": 12,
+      "assigned": 3,
+      "unresolved": 9,
+      "workloadWarnings": 0
+    },
+    "settings": {
+      "workloadThreshold": 5,
+      "workloadWindowDays": 7,
+      "splitSnapMinutes": 10
+    },
+    "message": null
+  },
+  "bootstrap": {
+    "school": {
+      "name": "Fictional School",
+      "logoUrl": null,
+      "timezone": "America/Chicago"
+    },
+    "actor": {
+      "displayName": "Local Administrator",
+      "email": "admin@example.test"
+    },
+    "summary": {
+      "activeStaff": 7,
+      "activeRooms": 1,
+      "activeSchedule": {
+        "id": "v1",
+        "name": "Fictional schedule",
+        "effectiveFrom": "2026-01-01",
+        "entryCount": 12
+      },
+      "schoolSubs": [
+        {
+          "id": "s2",
+          "displayName": "Riley Quinn",
+          "role": "Teacher",
+          "isSchoolSub": true
+        }
+      ],
+      "dayTypeCounts": {
+        "A": 12,
+        "B": 12,
+        "shared": 0
+      }
+    }
+  }
+}
